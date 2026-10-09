@@ -194,6 +194,35 @@ import Testing
         await s.shutdown()
     }
 
+    @Test func anOpenConnectionShowsAsTraffic() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let remote = try TestListener(greeting: "stream", hangUp: false)
+        let laptop = try freePort()
+        let s = makeSession(server)
+        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)")])
+        try await eventually("forward up") { s.active.count == 1 }
+        let pid = try #require(s.masterPID)
+        #expect(await TrafficSampler.busyPorts(masterPID: pid).contains(laptop) == false)
+
+        // A client connects and stays connected, like a websocket.
+        let client = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(client) }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(laptop).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(client, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        #expect(connected == 0)
+        try await eventually("sampler sees the open connection") {
+            await TrafficSampler.busyPorts(masterPID: pid).contains(laptop)
+        }
+        await s.shutdown()
+    }
+
     @Test func hostListComesFromTheTestConfig() throws {
         let server = try SSHTestServer()
         defer { server.cleanup() }

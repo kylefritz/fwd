@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Build and test (macOS)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Test
+        run: make test
+      - name: Build the app
+        run: make app
+      - name: Check the terminal command
+        run: |
+          test "$(build/fwd.app/Contents/Resources/bin/fwd --version)" = "dev"
+          build/fwd.app/Contents/Resources/bin/fwd --help
+
+  scan-linux:
+    name: Remote scan script (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan sees a known listener
+        run: |
+          python3 -m http.server 38123 --bind 127.0.0.1 >/dev/null 2>&1 &
+          sleep 1
+          sh scripts/scan.sh > out.txt
+          head -1 out.txt
+          test "$(head -1 out.txt)" = "#ss"
+          grep -E '^LISTEN .*:38123 ' out.txt

@@ -35,7 +35,8 @@ final class TestListener: @unchecked Sendable {
     private var stopped = false
 
     /// `port` 0 picks any free port.
-    init(port: Int = 0, greeting: String = "hello") throws {
+    /// With `hangUp` false, clients stay connected until the listener stops.
+    init(port: Int = 0, greeting: String = "hello", hangUp: Bool = true) throws {
         self.greeting = greeting
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         self.fd = fd
@@ -62,7 +63,7 @@ final class TestListener: @unchecked Sendable {
                 let client = accept(serverFD, nil, nil)
                 if client < 0 { return }
                 _ = bytes.withUnsafeBytes { write(client, $0.baseAddress, $0.count) }
-                close(client)
+                if hangUp { close(client) }
             }
         }
     }
