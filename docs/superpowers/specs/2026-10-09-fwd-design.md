@@ -1,0 +1,529 @@
+# fwd: a small menu bar port forwarder for macOS
+
+Date: 2026-10-09
+Status: draft for review
+
+## Purpose
+
+People who develop on remote machines over SSH (a cloud dev box, a home
+server, a work VM) keep needing remote ports on their laptop's `localhost`.
+Dev servers come and go on many ports, and laptops drop off the network all
+the time: the lid closes, the Wi-Fi changes. `fwd` keeps the right remote
+ports reachable with almost no interaction, and recovers by itself after a
+drop.
+
+Success looks like: open the lid, and within a few seconds every port that was
+forwarded before is forwarded again, without touching the app.
+
+A survey of existing tools (Core Tunnel, sshfwd, SSH TunnelBuilder, several
+small open-source menu bar apps) found none with wildcard ranges, and none
+combining quick add, ranges and liveness. Hence a new app.
+
+## Audience
+
+An open-source tool for technical users: people who already have a working
+`~/.ssh/config` and key-based login, and are comfortable with a terminal. The
+app has no host setup of its own; if `ssh <host>` works in a terminal, the
+host works in fwd. Examples in this document use the made-up hosts `devbox`,
+`homelab` and `staging`.
+
+## Scope
+
+In scope:
+
+- Hosts read from `~/.ssh/config`, following `Include`.
+- Local forwards only (remote port made reachable on the laptop).
+- Per-host port entries with history, on/off toggle, remove, clear all.
+- Wildcard entries that follow whatever is listening in a range.
+- Optional laptop-side port with `->`.
+- Automatic nearby port when the laptop port is taken.
+- Status per port: listening and, if the probe succeeds, traffic.
+- Automatic reconnect after sleep, lid close, or network loss.
+- Menu bar panel, plus a normal window showing the same view.
+- Read-only display of each host's `LocalForward` and `RemoteForward` lines
+  from the ssh config, with their current status.
+- Update check against GitHub releases, with an offer to restart.
+- Launch at login.
+- A terminal command that opens the app.
+- Public repository with README, license and tagged releases.
+- Install through Homebrew from the project's own tap.
+
+Out of scope: creating remote forwards, managing the config's own forwards,
+SOCKS proxies, editing `~/.ssh/config`, password or interactive
+authentication inside the app, non-loopback remote targets, treating two host
+aliases as the same machine, Intel Macs, Windows remotes, localization, telemetry of any
+kind, and Developer ID signing or notarization (see Distribution).
+
+## Port entry syntax
+
+One text field per host. `*` stands for exactly one digit. Spaces around `->`
+are optional and `→` is accepted too.
+
+| Input | Meaning |
+|---|---|
+| `3000` | remote 3000 on laptop 3000 |
+| `3000 -> 4000` | remote 3000 on laptop 4000 |
+| `31**` | every listening remote port in 3100 to 3199, same number on the laptop |
+| `3*** -> 4***` | every listening remote port in 3000 to 3999, shifted to 4000 to 4999 |
+
+Rules:
+
+- The left side is always the remote port; the right side is the laptop port.
+- In a wildcard mapping both sides must have `*` in the same positions, so the
+  mapping is a fixed offset.
+- Laptop ports below 1024 are rejected at entry (they need root). Remote ports
+  below 1024 are fine, for example `80 -> 8080`.
+- Entering something already in the history turns it on rather than
+  duplicating it.
+
+## Laptop port conflicts
+
+If the wanted laptop port is unavailable (used by another process, or by
+another fwd forward such as a different host's 3000), fwd picks the next free
+port upward, trying up to 50 ports. This applies to plain entries, explicit
+`->` entries and each port discovered through a wildcard.
+
+- The pill shows the real mapping, for example `3000 → 3001`, with a marker
+  that it was moved.
+- The assignment is sticky: it is stored and reused after reconnects so URLs
+  stay stable. It is re-picked only if that port is itself taken later. It
+  does not jump back when the original port frees up; toggling the entry off
+  and on re-evaluates it.
+- If nothing is free within 50 ports, the pill shows "blocked".
+
+## Architecture
+
+Swift 6, SwiftUI, SwiftPM package, driving the system `/usr/bin/ssh`. Using
+the system client means everything in the user's config (ProxyJump,
+ProxyCommand, identity files, the agent, hardware keys, certificates) works
+exactly as it does in a terminal, with no SSH implementation of our own.
+
+The app stores desired state and a reconciler makes actual state match it.
+Reconnecting is therefore not a special path: after a drop, actual state is
+empty and the reconciler re-applies everything.
+
+Units:
+
+- **HostList**: parses `~/.ssh/config` and its `Include`s for concrete `Host`
+  names, skipping patterns containing `*`, `?` or `!`. Re-read when the file
+  changes and when the panel opens.
+- **ConfigForwards**: per host, the `LocalForward` and `RemoteForward` lines
+  from `ssh -G <host>`, plus their status. See Forwards from the ssh config.
+- **PortPattern**: parses entry text into a remote range plus laptop offset.
+  Pure logic.
+- **PortAllocator**: given a wanted laptop port and the set of ports fwd
+  already holds, returns a free one by test-binding `127.0.0.1`. Holds the
+  sticky assignments.
+- **Connection**: one per host that has anything enabled. Owns the ssh master
+  process and control socket. Operations: start, check, stop, add forward,
+  cancel forward, run a remote command.
+- **RemoteScanner**: lists remote listening TCP ports through the master. Runs
+  one POSIX `sh` snippet that tries `ss -ltnH`, then
+  `lsof -nP -iTCP -sTCP:LISTEN`, then `netstat`, so it works on Linux, macOS
+  and BSD remotes whatever the user's login shell is.
+- **TrafficSampler**: per-forward activity from `nettop` samples of the ssh
+  master process. Optional; see Risks.
+- **Reconciler**: per host, diffs desired forwards (entries, expanded against
+  the scan for wildcards) against active forwards and issues add and cancel
+  calls.
+- **PowerMonitor**: sleep and wake notifications, `NWPathMonitor`, and the
+  clamshell state from IOKit.
+- **Store**: YAML in `~/.config/fwd/`, read and written with the Yams
+  package. See Storage.
+- **Updater**: checks GitHub releases and swaps the app bundle. See Updates.
+- **UI**: `MenuBarExtra` with a window-style panel, and a regular `Window`
+  hosting the same root view.
+
+### Storage
+
+`~/.config/fwd/ports.yaml` is the user's file: the entries per host, in the
+same text form typed into the app. It is safe to edit by hand or keep in
+dotfiles.
+
+```yaml
+hosts:
+  devbox:
+    - port: "3000"
+      on: true
+    - port: "3*** -> 4***"
+      on: false
+  homelab:
+    - port: "8080"
+      on: true
+```
+
+- The app watches the file and reloads on change, so hand edits apply without
+  a restart. An unparseable file leaves the running state untouched and shows
+  the parse error in the panel; the app does not overwrite it until it parses
+  again.
+- Writes are atomic (temp file plus rename). Comments in the file are not
+  preserved when the app rewrites it.
+- Sticky laptop port assignments are app-owned runtime state and live
+  separately in `~/.config/fwd/state.yaml`, so `ports.yaml` stays portable
+  between machines. Deleting `state.yaml` is harmless.
+- `~/.config/fwd/config.yaml` holds preferences. For now there is one,
+  `check_for_updates` (default `true`). A missing file means defaults.
+
+### ssh invocation
+
+Master, one per host:
+
+```
+ssh -M -N -S <socket> \
+  -o BatchMode=yes -o ClearAllForwardings=yes -o ExitOnForwardFailure=no \
+  -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o ConnectTimeout=8 \
+  -o ControlPersist=no -o RemoteCommand=none -o RequestTTY=no <host>
+```
+
+- Socket lives in the app's own directory with a short hashed name, so it
+  never collides with the user's own ControlMaster setup and stays under the
+  Unix socket path limit.
+- `ClearAllForwardings=yes` ignores `LocalForward` and `RemoteForward` lines
+  in the config, so fwd never fights a terminal session for those ports. It is
+  passed on every ssh invocation, not just the master: a probe showed that a
+  command run through the control socket without it makes the master open the
+  config's forwards after all.
+- `RemoteCommand=none` and `RequestTTY=no` neutralize config entries that
+  would otherwise break a background connection or the scan command.
+- Host names are passed after `--` and never through a shell, so an unusual
+  alias cannot be read as an option or a command.
+- Add: `ssh -S <socket> -O forward -L 127.0.0.1:<laptop>:127.0.0.1:<remote> <host>`
+- Cancel: same with `-O cancel`.
+- Health: `ssh -S <socket> -O check <host>`.
+- Scan: `ssh -S <socket> <host> '<scan command>'`.
+
+Forwards always bind `127.0.0.1` on the laptop, never other interfaces.
+
+## Connection lifecycle
+
+Per-host states: idle (nothing enabled), connecting, connected, retrying,
+paused (asleep or no network), needs attention.
+
+- A host connects when its first entry is enabled and disconnects when the
+  last one is turned off.
+- A dead link is noticed within roughly 10 to 15 seconds via the keepalive
+  options; the master exits and the host moves to retrying.
+- Retry schedule while awake with a network path: 2s, 5s, 15s, 30s, then every
+  60s indefinitely.
+- No network path: no polling. The host is paused until `NWPathMonitor`
+  reports a usable path.
+- Lid closed and asleep: the process is suspended by macOS, so nothing runs.
+  On the will-sleep notification hosts are marked paused and masters stopped.
+- Lid closed but awake (external display): treated as awake. If the clamshell
+  is closed and the link is down, the retry loop skips straight to the 60s
+  interval.
+- On wake, or when the network path returns: after a 1 second settle, each
+  enabled host runs `-O check`, kills a stale master if the check fails, and
+  reconnects immediately with the retry schedule reset.
+- Authentication never prompts (`BatchMode=yes`). Anything that needs a human
+  puts the host in "needs attention" and stops retrying: a key not loaded in
+  the agent, a password-only host, an unknown or changed host key, an expired
+  single sign-on session behind a ProxyCommand. The card shows the last ssh
+  error line with two buttons: "Retry", and "Open in Terminal", which runs
+  `ssh <host>` in the user's terminal so they can complete whatever ssh is
+  asking for. After a successful retry the host continues normally.
+
+## Scanning and status
+
+While a host is connected the scanner runs every 5 seconds, and immediately
+after connect. Each result feeds the reconciler and the pills.
+
+Port states shown on a pill:
+
+| State | Meaning |
+|---|---|
+| off | entry disabled |
+| waiting | forwarded or ready, nothing listening remotely |
+| live | a server is listening on the remote port |
+| active | live, and bytes moved in the last few seconds |
+| moved | modifier: laptop port differs from the wanted one |
+| blocked | no laptop port available |
+
+Single-port entries are forwarded as soon as the host connects, listening or
+not, so the first request works the moment the server starts. Wildcard entries
+forward only ports that are currently listening, and cancel them when they
+stop.
+
+## Forwards from the ssh config
+
+Each host card also lists the `LocalForward` and `RemoteForward` lines that
+apply to that host, as read-only pills visually distinct from fwd's own
+(labelled "config", no toggle). They are read with `ssh -G <host>`, so
+`Include` and `Match` are resolved the way ssh resolves them. Commented-out
+lines are not shown.
+
+fwd does not open these forwards: its own connections still use
+`ClearAllForwardings=yes`. They are opened by the user's own ssh sessions, and
+fwd only reports whether that has happened.
+
+Status of a `LocalForward` (checked on the laptop with `lsof`, every 5 seconds
+while the panel or window is open):
+
+| State | Meaning |
+|---|---|
+| on | the laptop port is held by an `ssh` process |
+| not forwarded | nothing is listening on the laptop port |
+| taken | the laptop port is held by something else; the pill names it, including "fwd" when fwd itself holds it |
+
+Status of a `RemoteForward` (the listener is on the remote, so it needs fwd's
+connection to that host):
+
+| State | Meaning |
+|---|---|
+| on | fwd is connected to the host and its scan sees the remote port listening |
+| not forwarded | fwd is connected and the remote port is not listening |
+| unknown | fwd has no connection to that host |
+
+Known interaction: fwd does not reserve the config's laptop ports. If fwd is
+already holding a port that a config `LocalForward` wants, the user's next ssh
+session will fail to bind it, and the config pill shows "taken by fwd". In the
+other order, fwd's entry is bumped to a nearby port as usual.
+
+## UI
+
+- Menu bar icon with three looks: idle, forwarding, reconnecting or attention.
+- Panel: one card per host. Each card has the host name, a one-line status, a
+  port field (Enter adds) and the entry pills.
+- Hosts with entries are listed first as full cards. All other hosts from the
+  config sit below in a compact list, and a filter field appears when there
+  are more than eight hosts, so a config with hundreds of hosts stays usable.
+- Pill: click toggles on or off; hover reveals remove; a live pill has an
+  "open" control for `http://localhost:<laptop port>`. A wildcard pill expands
+  to show the ports it currently forwards.
+- Per-host "Clear all" removes that host's history.
+- Footer: "Turn all off", "Open window", "Open log", "Copy log location",
+  "Launch at login" (a checkbox), "Install terminal command", "Check for
+  updates", the version, and
+  "Quit".
+- First run with no usable hosts shows a short explanation and a link to the
+  README instead of an empty panel.
+- Tone is small and friendly: rounded pills, soft colors, a little motion on
+  state changes. Follows light and dark mode. Every state also has a text or
+  shape cue and a VoiceOver label, so nothing depends on color alone.
+
+## Errors
+
+- Invalid entry text: the field shakes and shows a one-line reason; nothing is
+  stored.
+- Forward add fails for a reason other than a port conflict: pill shows
+  "blocked" with the ssh message on hover.
+- Host removed from the config: its card stays, greyed, until cleared.
+- Scan command unavailable on the remote: single ports still forward; wildcard
+  pills show "can't scan this host".
+- No `~/.ssh/config`, or one that ssh rejects: the panel says so and shows
+  ssh's own message.
+- The last ssh error line per host is shown on its card; full detail is in the
+  log.
+
+## Logging
+
+Everything goes to `~/Library/Logs/fwd/fwd.log` as plain timestamped lines
+tagged with the host: state changes, connects and retries, forwards added,
+cancelled and bumped, sleep, wake and network events, config and `ports.yaml`
+reloads, update checks, and all ssh stderr. Scan results are logged only when
+they change. When the file passes 5 MB it is renamed to
+`~/Library/Logs/fwd/fwd.log.1`, replacing the previous one. The footer's
+"Copy log location" puts the full log path on the clipboard, which is the
+thing to paste into a bug report.
+
+## Privacy
+
+fwd makes exactly two kinds of network connection: the user's own ssh
+sessions, and the update check to GitHub (which can be turned off). It
+collects and sends nothing else. The log stays on the machine.
+
+## Distribution
+
+- Source lives in the public GitHub repository `kylefritz/fwd`, MIT licensed.
+  The repository slug is one constant in the source, used by the Updater.
+- Bundle identifier `io.github.kylefritz.fwd`, `LSUIElement` set so there is no
+  Dock icon.
+- Requires macOS 26 or later on Apple Silicon. Intel Macs and older macOS
+  versions are not supported; 26 is what the app is built and tested on.
+- Releases are built by a GitHub Actions workflow on a version tag
+  (`vX.Y.Z`): build, bundle, ad-hoc `codesign`, zip, and publish a release
+  with one asset, `fwd.zip`. `scripts/bundle.sh` does the bundling and is the
+  same script used locally. `scripts/release.sh <version>` stamps the version
+  and pushes the tag.
+- Building from source needs only Command Line Tools: `make app` produces
+  `fwd.app`, `make install` copies it to `/Applications`.
+- Homebrew is the recommended install: `brew install kylefritz/tap/fwd`, from
+  the project's own tap repository (`kylefritz/homebrew-tap`). It is a formula
+  that builds from the tagged source on the user's machine, not a cask that
+  downloads the prebuilt app. A locally built app is never quarantined, so
+  this route has no Gatekeeper step. The formula installs `fwd.app` under the
+  Homebrew prefix and links the `fwd` terminal command onto `PATH`. The
+  release workflow updates the formula's URL and checksum on each tag.
+- The app is ad-hoc signed and not notarized. A copy downloaded with a browser
+  is quarantined and Gatekeeper blocks it until the user approves it in System
+  Settings or removes the quarantine attribute. The README gives both sets of
+  steps and the build-from-source route, which has no such step.
+  Developer ID signing and notarization would remove this friction; it needs a
+  paid Apple Developer account and is left for later.
+- README covers: what it does, install (Homebrew first), the Gatekeeper step, the entry syntax,
+  requirements (key-based login that works without prompts), file locations,
+  privacy, and troubleshooting with the log.
+
+## Updates
+
+- Checks `api.github.com/repos/kylefritz/fwd/releases/latest` at launch and
+  every 6 hours while awake, and on demand from "Check for updates". The
+  automatic checks are skipped when `check_for_updates` is `false`.
+- If the release tag is a higher version than the running one, the zip is
+  downloaded in the background, unpacked to a temporary folder and checked:
+  bundle identifier matches, version matches the tag, `codesign --verify`
+  passes.
+- When it is ready the panel shows "fwd X.Y.Z is ready" with a "Restart to
+  update" button and a link to the release notes, and the menu bar icon gets
+  a small dot. Nothing restarts without the click.
+- On restart the app swaps the new bundle into place, keeping the old one
+  until the swap succeeds, then relaunches. Forwards drop for a moment and are
+  re-applied at launch from `ports.yaml`.
+- If the app's folder is not writable, or any check fails, the panel instead
+  offers "Open release page" and the reason is logged.
+- Failed checks (offline, rate limited) are logged and retried at the next
+  interval, with no UI.
+- A build from source reports version `dev` and never self-updates; it only
+  mentions that a release exists.
+- A Homebrew install never replaces itself either, because Homebrew owns
+  those files. When a newer release exists the panel shows "fwd X.Y.Z is
+  available" with the command `brew upgrade fwd` and a copy button, then
+  "Restart to finish updating" once the upgraded version is on disk.
+
+Trust: an update is trusted because it came over HTTPS from the project's
+repository, nothing stronger. The README says so. Updates downloaded by the
+app are not quarantined and launch normally.
+
+## Launch at login
+
+A footer checkbox registers the app with `SMAppService.mainApp`. It is off by
+default. The checkbox reflects the system's state, so changes made in System
+Settings show up.
+
+## Terminal command
+
+Typing `fwd` in a terminal opens the app's window, starting the app first if
+it is not running. If it is already running, the existing instance comes to
+the front; a second copy is never started.
+
+- The command is a small script shipped inside the bundle at
+  `fwd.app/Contents/Resources/bin/fwd`. It asks macOS to open the app by
+  bundle identifier, so it keeps working if the app is moved, and it returns
+  immediately rather than tying up the terminal.
+- `fwd --version` prints the installed version; `fwd --help` prints usage.
+  Those are the only arguments.
+- The footer item "Install terminal command" symlinks the script to
+  `~/.local/bin/fwd`, which needs no administrator password. If that folder
+  is not on `PATH`, the app shows the one line to add to the shell profile.
+  The item reads "Terminal command installed" once the link exists and points
+  at this copy of the app. `make install` creates the same link.
+- Because it is a symlink into the bundle, updates carry the command along
+  with no reinstall.
+- A Homebrew install puts `fwd` on `PATH` by itself, and the footer item is
+  hidden.
+- Without installing anything, `open -a fwd` does the same job.
+
+## Testing
+
+The suite is automatic: `make test` runs all of it locally, and GitHub Actions
+runs it on every push and pull request. A release tag is only built if it
+passes. No Docker or other external service is needed.
+
+To make that possible the package has two targets: `FwdCore`, a library
+holding everything except the views, and `fwd`, the thin SwiftUI app. Tests
+drive `FwdCore` headless. Three seams exist for testing and are otherwise
+invisible: the ssh config path, the `~/.config/fwd` and log locations, and the
+releases URL can each be overridden; the clock is injected so retry and poll
+intervals run instantly; and sleep, wake, network and lid events come through
+a protocol so tests can fire them.
+
+### Layer 1: unit tests
+
+Pure logic, no processes: PortPattern (valid and invalid entries, wildcard
+offsets), HostList parsing including `Include` and pattern hosts, parsing of
+`ssh -G` output for config forwards, PortAllocator, Reconciler diffing against
+a fake Connection, the retry schedule, version comparison, `ports.yaml`
+round-trips and bad-file handling, and scan output parsing from recorded
+samples of `ss`, `lsof` and `netstat`.
+
+### Layer 2: integration tests against a real sshd
+
+The test harness starts a throwaway OpenSSH server on `127.0.0.1` on a free
+high port, running as the current user with no privileges: a generated host
+key, a generated login key, and its own `sshd_config`, all in a temporary
+folder, plus a matching temporary ssh config that defines test hosts. This was
+tried and works with the stock `/usr/sbin/sshd`, both locally and in principle
+on GitHub's macOS runners, which is why no container is needed.
+
+Against it the suite checks, end to end with real `ssh`:
+
+- A forward carries bytes: an HTTP request through the laptop port reaches a
+  listener on the "remote" side; after cancel it no longer does.
+- A wildcard entry forwards a port when a listener appears in its range and
+  cancels it when the listener stops.
+- A taken laptop port is bumped to the next free one, and the choice sticks
+  across a reconnect.
+- Recovery: after the master is killed, and separately after the server is
+  stopped and restarted, every enabled forward comes back with no input.
+- Simulated sleep, wake and network-loss events pause and resume as specified,
+  including no polling while there is no network.
+- A host with the wrong key ends in "needs attention" and stops retrying.
+- `LocalForward` and `RemoteForward` lines in the test config are listed with
+  the right status and are never opened by fwd itself.
+- Editing `ports.yaml` on disk is picked up; a broken file is not overwritten.
+
+The harness stops only the processes it started, by the process IDs it
+recorded, and never by name, so it cannot touch a real ssh session on the
+machine.
+
+### Layer 3: updater tests
+
+A local HTTP server stands in for GitHub and serves a fake "latest release"
+and zip. Tests cover: newer, same and older versions; a download that fails
+verification; the bundle swap into a temporary folder, including keeping the
+old bundle when the swap fails; and the Homebrew and source-build cases that
+must not self-replace.
+
+### Layer 4: Linux scan check
+
+The remote scan is a single `sh` script file. A small Linux job in GitHub
+Actions runs that script against real `ss` with a known listener and checks
+the output parses. This covers Linux remotes without building the app there.
+
+### Not automated
+
+- The look of the panel and window. View logic lives in `FwdCore` view models
+  and is unit tested; the pixels are checked by eye.
+- Real lid-close and Wi-Fi changes on a laptop, checked by hand before a
+  release using a short checklist in the repository.
+- The Homebrew formula, checked with `brew install --build-from-source` and
+  `brew test` before the tap is updated; the formula's `test` block runs
+  `fwd --version`.
+
+## Risks to resolve first
+
+1. **Traffic via `nettop`**: unverified that per-connection byte counts for
+   the ssh master can be read reliably without privileges. Probe first. If it
+   fails, drop the "active" state; "live" still works.
+2. **`swift test` with Command Line Tools only**: confirm a test framework is
+   usable without Xcode. If not, tests run as a small executable target.
+3. **`-O forward` failure reporting**: resolved by a probe. A forward onto a
+   busy laptop port exits 255 with only "Port forwarding failed", so ssh's
+   message cannot identify a port conflict. The allocator's own test-bind is
+   therefore the conflict check, and any `-O forward` failure after a
+   successful test-bind is treated as a generic error. The same probe
+   confirmed the 104-byte limit on the control socket path.
+4. **Launch at login for an ad-hoc signed app**: confirm `SMAppService`
+   accepts it. If not, the checkbox is dropped and the README explains adding
+   it under Login Items by hand.
+5. **Homebrew formula**: confirm the app builds inside Homebrew's build
+   environment (SwiftPM fetching the Yams dependency there), and that launch
+   at login survives a `brew upgrade`, since the app's real path under the
+   Homebrew prefix includes the version number.
+
+## Decisions
+
+- **Name**: `fwd`, kept knowing that other small projects share it (several
+  dormant port forwarders on GitHub). No Homebrew formula or cask uses the
+  name. The README title spells out "fwd: SSH port forwarding for the macOS
+  menu bar" so it can be found by search.
