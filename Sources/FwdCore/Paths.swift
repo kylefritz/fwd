@@ -1,0 +1,62 @@
+import Foundation
+
+/// Where fwd keeps things. Everything can be redirected for tests.
+public struct Paths: Sendable {
+    /// Holds ports.yaml, state.yaml and config.yaml.
+    public var configDir: URL
+    public var logFile: URL
+    /// Passed to ssh with `-F` when set; nil means ssh's own default.
+    public var sshConfigOverride: URL?
+    /// Control sockets live here. Must be short: socket paths cap at 104 bytes.
+    public var socketDir: URL
+    public var releasesURL: URL
+
+    public static let repository = "kylefritz/fwd"
+    public static let bundleIdentifier = "io.github.kylefritz.fwd"
+
+    public var sshConfig: URL {
+        sshConfigOverride ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".ssh/config")
+    }
+    public var portsFile: URL { configDir.appendingPathComponent("ports.yaml") }
+    public var stateFile: URL { configDir.appendingPathComponent("state.yaml") }
+    public var preferencesFile: URL { configDir.appendingPathComponent("config.yaml") }
+
+    public init(configDir: URL, logFile: URL, sshConfigOverride: URL?, socketDir: URL, releasesURL: URL) {
+        self.configDir = configDir
+        self.logFile = logFile
+        self.sshConfigOverride = sshConfigOverride
+        self.socketDir = socketDir
+        self.releasesURL = releasesURL
+    }
+
+    /// Defaults, with `FWD_HOME`, `FWD_SSH_CONFIG` and `FWD_RELEASES_URL`
+    /// honored so a test or a curious user can sandbox the app.
+    public static func fromEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment) -> Paths {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var configDir = home.appendingPathComponent(".config/fwd")
+        var logFile = home.appendingPathComponent("Library/Logs/fwd/fwd.log")
+        var socketDir = URL(fileURLWithPath: "/tmp/fwd-\(getuid())")
+        if let override = env["FWD_HOME"], !override.isEmpty {
+            let base = URL(fileURLWithPath: override)
+            configDir = base.appendingPathComponent("config")
+            logFile = base.appendingPathComponent("logs/fwd.log")
+            socketDir = URL(fileURLWithPath: "/tmp/fwd-\(getuid())-\(shortHash(override))")
+        }
+        let sshConfig = env["FWD_SSH_CONFIG"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        let releases = env["FWD_RELEASES_URL"].flatMap(URL.init(string:))
+            ?? URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
+        return Paths(configDir: configDir, logFile: logFile, sshConfigOverride: sshConfig,
+                     socketDir: socketDir, releasesURL: releases)
+    }
+
+    /// Short stable hash (FNV-1a), for socket file names.
+    public static func shortHash(_ s: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in s.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 36)
+    }
+}

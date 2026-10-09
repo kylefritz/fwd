@@ -1,0 +1,92 @@
+import Foundation
+import Testing
+@testable import FwdCore
+
+func tempPaths() -> Paths {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-t-\(UUID().uuidString)")
+    return Paths.fromEnvironment(["FWD_HOME": base.path])
+}
+
+@Suite struct StoreTests {
+    @Test func roundTrip() throws {
+        let store = Store(paths: tempPaths())
+        let file = PortsFile(hosts: [
+            "devbox": [Entry(port: "3000"), Entry(port: "3*** -> 4***", on: false)],
+            "homelab": [Entry(port: "8080")],
+        ])
+        try store.savePorts(file)
+        #expect(try store.loadPorts() == file)
+        let text = try String(contentsOf: store.paths.portsFile, encoding: .utf8)
+        #expect(text.contains("devbox"))
+        #expect(text.contains("3*** -> 4***"))
+    }
+
+    @Test func missingAndEmptyFilesAreEmpty() throws {
+        let store = Store(paths: tempPaths())
+        #expect(try store.loadPorts() == PortsFile())
+        for text in ["", "\n\n", "# just a comment\n", "hosts:\n", "hosts: {}\n", "hosts:\n  devbox:\n"] {
+            let parsed = try Store.decodePorts(text)
+            let allEmpty = parsed.hosts.values.allSatisfy { $0.isEmpty }
+            #expect(allEmpty, "for \(text.debugDescription)")
+        }
+    }
+
+    @Test func handWrittenFormsAreAccepted() throws {
+        let parsed = try Store.decodePorts("""
+        # my ports
+        hosts:
+          devbox:
+            - port: 3000
+            - port: "31**"
+              on: false
+            - {port: 80 -> 8080, on: true}
+        """)
+        #expect(parsed.hosts["devbox"] == [
+            Entry(port: "3000", on: true), Entry(port: "31**", on: false), Entry(port: "80 -> 8080", on: true),
+        ])
+    }
+
+    @Test(arguments: [
+        "hosts: [1, 2",
+        "hosts: 5\n",
+        "hosts:\n  devbox: nope\n",
+        "hosts:\n  devbox:\n    - 3000\n",
+        "- just\n- a list\n",
+        "hosts:\n  devbox:\n    - port: 3000\n      on: maybe\n",
+    ])
+    func malformedFilesThrowRatherThanLoadEmpty(_ text: String) {
+        #expect(throws: (any Error).self) { try Store.decodePorts(text) }
+    }
+
+    @Test func stickyRoundTripAndMissingFile() {
+        let store = Store(paths: tempPaths())
+        #expect(store.loadSticky().isEmpty)
+        store.saveSticky(["devbox|3000|3000": 3001])
+        #expect(store.loadSticky() == ["devbox|3000|3000": 3001])
+    }
+
+    @Test func preferencesDefaultOnAndCanBeTurnedOff() throws {
+        let store = Store(paths: tempPaths())
+        #expect(store.loadPreferences().checkForUpdates)
+        try FileManager.default.createDirectory(at: store.paths.configDir, withIntermediateDirectories: true)
+        try "check_for_updates: false\n".write(to: store.paths.preferencesFile, atomically: true, encoding: .utf8)
+        #expect(!store.loadPreferences().checkForUpdates)
+        try "nonsense: [".write(to: store.paths.preferencesFile, atomically: true, encoding: .utf8)
+        #expect(store.loadPreferences().checkForUpdates)
+    }
+
+    @Test func logAppendsAndRotates() throws {
+        let paths = tempPaths()
+        let log = Log(file: paths.logFile, maxBytes: 200)
+        log.write("connected", host: "devbox")
+        log.flush()
+        let first = try String(contentsOf: paths.logFile, encoding: .utf8)
+        #expect(first.contains("[devbox] connected"))
+        for i in 0..<20 { log.write("line \(i) with some padding to grow the file") }
+        log.flush()
+        let rolled = paths.logFile.appendingPathExtension("1")
+        #expect(FileManager.default.fileExists(atPath: rolled.path))
+        let size = try FileManager.default.attributesOfItem(atPath: paths.logFile.path)[.size] as! Int
+        #expect(size < 400)
+    }
+}

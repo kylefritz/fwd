@@ -1,0 +1,2 @@
+import FwdCore
+print("fwd")
