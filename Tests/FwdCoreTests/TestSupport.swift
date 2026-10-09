@@ -175,6 +175,7 @@ final class SSHTestServer {
 
     /// Hosts defined in the generated ssh config.
     static let goodHost = "testbox"
+    static let secondHost = "testbox2"
     static let badKeyHost = "badkey"
 
     init() throws {
@@ -227,7 +228,8 @@ final class SSHTestServer {
             """
         }
         let forwards = "  LocalForward \(configLocalForward) 127.0.0.1:\(configLocalForward)\n  RemoteForward \(configRemoteForward) 127.0.0.1:\(configRemoteForward)"
-        try (host(Self.goodHost, key: "userkey", extra: forwards) + host(Self.badKeyHost, key: "wrongkey") + "Host pattern-*\n  User nobody\n")
+        try (host(Self.goodHost, key: "userkey", extra: forwards) + host(Self.secondHost, key: "userkey")
+            + host(Self.badKeyHost, key: "wrongkey") + "Host pattern-*\n  User nobody\n")
             .write(to: paths.sshConfig, atomically: true, encoding: .utf8)
 
         try start()

@@ -196,6 +196,18 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         return .unreachable(message)
     }
 
+    /// Asks the master to add or drop one forward. This is the one call that
+    /// can't carry `ClearAllForwardings`, since that would also clear the
+    /// `-L` being requested. It reads no config file instead (`-F none`), so
+    /// there are no config forwards for it to drag along; the socket is all
+    /// it needs.
+    private func forwardRequest(_ verb: String, local: Int, remote: Int) async -> ShellResult {
+        await Shell.run(Self.sshPath, [
+            "-F", "none", "-o", "BatchMode=yes", "-S", socketPath,
+            "-O", verb, "-L", "127.0.0.1:\(local):127.0.0.1:\(remote)", "--", host,
+        ], timeout: 15)
+    }
+
     public func isAlive() async -> Bool {
         guard masterPID != nil else { return false }
         return await control(["-O", "check"], timeout: 5).ok
@@ -223,7 +235,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
 
     public func addForward(local: Int, remote: Int) async throws {
         try requireMaster()
-        let result = await control(["-O", "forward", "-L", "127.0.0.1:\(local):127.0.0.1:\(remote)"])
+        let result = await forwardRequest("forward", local: local, remote: remote)
         guard result.ok else {
             throw ConnectionError.failed(Self.lastLine(result.stderr.isEmpty ? "forward failed" : result.stderr))
         }
@@ -231,7 +243,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
 
     public func cancelForward(local: Int, remote: Int) async throws {
         try requireMaster()
-        let result = await control(["-O", "cancel", "-L", "127.0.0.1:\(local):127.0.0.1:\(remote)"])
+        let result = await forwardRequest("cancel", local: local, remote: remote)
         guard result.ok else {
             throw ConnectionError.failed(Self.lastLine(result.stderr.isEmpty ? "cancel failed" : result.stderr))
         }
