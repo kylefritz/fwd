@@ -125,12 +125,12 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             }
         }
 
-        lock.lock()
-        self.process = process
-        stderrLines = []
-        ready = false
-        stopping = false
-        lock.unlock()
+        lock.withLock {
+            self.process = process
+            stderrLines = []
+            ready = false
+            stopping = false
+        }
 
         do {
             try process.run()
@@ -147,9 +147,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             }
             if FileManager.default.fileExists(atPath: socketPath),
                await control(["-O", "check"], timeout: 5).ok {
-                lock.lock()
-                ready = true
-                lock.unlock()
+                lock.withLock { ready = true }
                 return
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -214,11 +212,11 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     }
 
     public func stop() async {
-        lock.lock()
-        stopping = true
-        ready = false
-        let process = self.process
-        lock.unlock()
+        let process = lock.withLock { () -> Process? in
+            stopping = true
+            ready = false
+            return self.process
+        }
         guard let process else { return }
         if process.isRunning {
             _ = await control(["-O", "exit"], timeout: 5)
