@@ -74,6 +74,20 @@ public final class SSHConnection: Connection, @unchecked Sendable {
 
     private var base: [String] { Self.baseOptions(paths: paths) }
 
+    /// Closes masters left behind by a run that was killed or crashed.
+    /// Without this they would keep their laptop ports forever. Only touches
+    /// sockets in fwd's own socket folder.
+    public static func closeLeftovers(paths: Paths, log: Log) async {
+        let sockets = (try? FileManager.default.contentsOfDirectory(atPath: paths.socketDir.path)) ?? []
+        for name in sockets {
+            let socket = paths.socketDir.appendingPathComponent(name).path
+            let result = await Shell.run(
+                sshPath, ["-F", "none", "-S", socket, "-O", "exit", "--", "leftover"], timeout: 5)
+            if result.ok { log.write("closed a connection left over from a previous run") }
+            try? FileManager.default.removeItem(atPath: socket)
+        }
+    }
+
     private func control(_ arguments: [String], timeout: TimeInterval = 15) async -> ShellResult {
         await Shell.run(Self.sshPath, base + ["-S", socketPath] + arguments + ["--", host], timeout: timeout)
     }

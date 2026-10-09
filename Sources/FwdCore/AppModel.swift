@@ -90,6 +90,7 @@ public final class AppModel: ObservableObject {
     private let power: PowerEvents
     private let timing: Timing
     private let makeConnection: (String) -> Connection
+    private let cleansLeftovers: Bool
 
     private var file = PortsFile()
     private var sessions: [String: HostSession] = [:]
@@ -115,6 +116,7 @@ public final class AppModel: ObservableObject {
         self.log = log
         self.store = Store(paths: paths)
         self.allocator = PortAllocator(sticky: Store(paths: paths).loadSticky())
+        self.cleansLeftovers = (makeConnection == nil)
         self.makeConnection = makeConnection ?? { host in SSHConnection(host: host, paths: paths, log: log) }
         allocator.onStickyChange = { [weak self] in
             guard let self else { return }
@@ -128,6 +130,7 @@ public final class AppModel: ObservableObject {
     /// call `tick()` themselves.
     public func start(runTimer: Bool = true) async {
         log.write("fwd started")
+        if cleansLeftovers { await SSHConnection.closeLeftovers(paths: paths, log: log) }
         power.onEvent = { [weak self] event in
             Task { @MainActor in await self?.handle(event) }
         }

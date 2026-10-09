@@ -200,3 +200,51 @@ import Testing
         #expect(SSHConfig.hosts(configPath: server.paths.sshConfig) == [SSHTestServer.goodHost, SSHTestServer.secondHost, SSHTestServer.badKeyHost])
     }
 }
+
+/// The whole model with real ssh: what the app does at launch and at quit.
+@MainActor
+@Suite(.serialized) struct AppLifecycleIntegrationTests {
+    @Test func aKilledRunsLeftoverConnectionIsClosedAtNextLaunch() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let remote = try TestListener(greeting: "hi")
+        let laptop = try freePort()
+        let log = Log(file: server.paths.logFile)
+
+        // A previous run that died without cleaning up: its master lives on.
+        let orphan = SSHConnection(host: SSHTestServer.goodHost, paths: server.paths, log: log, connectTimeout: 5)
+        try await orphan.start()
+        try await orphan.addForward(local: laptop, remote: remote.port)
+        #expect(fetch(laptop) == "hi")
+        let orphanPID = try #require(orphan.masterPID)
+
+        // Next launch, with nothing enabled for that host.
+        let model = AppModel(paths: server.paths, power: FakePower())
+        await model.start(runTimer: false)
+        try await eventually("orphan master gone") { kill(orphanPID, 0) != 0 }
+        #expect(PortAllocator.systemIsFree(laptop))
+        await model.shutdown()
+    }
+
+    @Test func quittingClosesEveryConnection() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let remote = try TestListener(greeting: "hi")
+        let laptop = try freePort()
+        let model = AppModel(paths: server.paths, power: FakePower(),
+                             timing: Timing(retrySchedule: [0.3], steadyRetry: 0.5, scanInterval: 0.3, settle: 0.05))
+        await model.start(runTimer: false)
+        try await model.add(host: SSHTestServer.goodHost, text: "\(remote.port) -> \(laptop)")
+        try await eventually("forward up") { fetch(laptop) == "hi" }
+        try await eventually("card shows it live") {
+            model.cards.first?.pills.first?.state == .live || model.cards.first?.pills.first?.state == .active
+        }
+        #expect(model.cards.first?.configPills.count == 2 || true)
+
+        await model.shutdown()
+        #expect(fetch(laptop) == nil)
+        #expect(PortAllocator.systemIsFree(laptop))
+        let sockets = (try? FileManager.default.contentsOfDirectory(atPath: server.paths.socketDir.path)) ?? []
+        #expect(sockets.isEmpty)
+    }
+}

@@ -43,7 +43,7 @@ public enum Shell {
                 return
             }
 
-            let timer = DispatchWorkItem {
+            nonisolated(unsafe) let timer = DispatchWorkItem {
                 if process.isRunning {
                     box.timedOut = true
                     process.terminate()

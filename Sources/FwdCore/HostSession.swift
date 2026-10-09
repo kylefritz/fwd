@@ -281,7 +281,14 @@ public final class HostSession {
             guard gen == generation else { return }
             if result != listening {
                 if let result {
-                    log.write("listening: \(result.sorted().map(String.init).joined(separator: " "))", host: host)
+                    // Only what changed: a busy remote has dozens of listeners.
+                    let before = listening ?? []
+                    let appeared = result.subtracting(before).sorted().map { "+\($0)" }
+                    let gone = before.subtracting(result).sorted().map { "-\($0)" }
+                    let summary = listening == nil
+                        ? "\(result.count) ports listening on the remote"
+                        : "remote listeners changed: " + (appeared + gone).joined(separator: " ")
+                    log.write(summary, host: host)
                 } else if !scanUnavailable {
                     log.write("can't scan this host (no ss, netstat or lsof)", host: host)
                 }
