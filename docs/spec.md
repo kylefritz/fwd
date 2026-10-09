@@ -118,11 +118,12 @@ Units:
   process and control socket. Operations: start, check, stop, add forward,
   cancel forward, run a remote command.
 - **RemoteScanner**: lists remote listening TCP ports through the master. Runs
-  one POSIX `sh` snippet that tries `ss -ltnH`, then
-  `lsof -nP -iTCP -sTCP:LISTEN`, then `netstat`, so it works on Linux, macOS
-  and BSD remotes whatever the user's login shell is.
-- **TrafficSampler**: per-forward activity from `nettop` samples of the ssh
-  master process. Optional; see Risks.
+  one POSIX `sh` snippet that tries `ss -ltnH`, then `netstat -an`, then
+  `lsof -nP -iTCP -sTCP:LISTEN`, so it works on Linux, macOS and BSD remotes
+  whatever the user's login shell is. `netstat` comes before `lsof` because
+  an unprivileged `lsof` only sees the user's own processes.
+- **TrafficSampler**: which forwarded laptop ports have a connection open,
+  from `nettop` samples of the ssh master process.
 - **Reconciler**: per host, diffs desired forwards (entries, expanded against
   the scan for wildcards) against active forwards and issues add and cancel
   calls.
@@ -175,9 +176,9 @@ ssh -M -N -S <socket> \
   -o ControlPersist=no -o RemoteCommand=none -o RequestTTY=no <host>
 ```
 
-- Socket lives in the app's own directory with a short hashed name, so it
-  never collides with the user's own ControlMaster setup and stays under the
-  Unix socket path limit.
+- Sockets live in `/tmp/fwd-<uid>/` (mode 700) with short hashed names, so
+  they never collide with the user's own ControlMaster setup and stay under
+  the 104-byte Unix socket path limit whatever the home folder is called.
 - `ClearAllForwardings=yes` ignores `LocalForward` and `RemoteForward` lines
   in the config, so fwd never fights a terminal session for those ports. It is
   passed on every ssh invocation, not just the master: a probe showed that a
@@ -187,8 +188,15 @@ ssh -M -N -S <socket> \
   would otherwise break a background connection or the scan command.
 - Host names are passed after `--` and never through a shell, so an unusual
   alias cannot be read as an option or a command.
-- Add: `ssh -S <socket> -O forward -L 127.0.0.1:<laptop>:127.0.0.1:<remote> <host>`
+- Add: `ssh -F none -S <socket> -O forward -L 127.0.0.1:<laptop>:127.0.0.1:<remote> <host>`
 - Cancel: same with `-O cancel`.
+- Add and cancel are the exception to the rule above. `ClearAllForwardings`
+  on such a call also clears the `-L` being requested, so the call succeeds
+  and does nothing. They read no config at all instead (`-F none`), which
+  leaves no config forwards to drag along; the socket is all they need.
+- At launch, fwd asks any master still listening in its socket folder to
+  exit. A run that was killed or crashed would otherwise leave masters
+  holding laptop ports. At quit, every master is closed before the app exits.
 - Health: `ssh -S <socket> -O check <host>`.
 - Scan: `ssh -S <socket> <host> '<scan command>'`.
 
@@ -235,9 +243,13 @@ Port states shown on a pill:
 | off | entry disabled |
 | waiting | forwarded or ready, nothing listening remotely |
 | live | a server is listening on the remote port |
-| active | live, and bytes moved in the last few seconds |
+| active | live, and a connection is open through it at the last sample |
 | moved | modifier: laptop port differs from the wanted one |
 | blocked | no laptop port available |
+
+"Active" comes from sampling open connections every few seconds while the
+panel or window is showing. A long-lived connection always shows; a single
+quick request can fall between samples.
 
 Single-port entries are forwarded as soon as the host connects, listening or
 not, so the first request works the moment the server starts. Wildcard entries
@@ -433,8 +445,8 @@ To make that possible the package has two targets: `FwdCore`, a library
 holding everything except the views, and `fwd`, the thin SwiftUI app. Tests
 drive `FwdCore` headless. Three seams exist for testing and are otherwise
 invisible: the ssh config path, the `~/.config/fwd` and log locations, and the
-releases URL can each be overridden; the clock is injected so retry and poll
-intervals run instantly; and sleep, wake, network and lid events come through
+releases URL can each be overridden; retry and poll intervals are injected so
+tests run them in milliseconds; and sleep, wake, network and lid events come through
 a protocol so tests can fire them.
 
 ### Layer 1: unit tests
@@ -502,21 +514,24 @@ the output parses. This covers Linux remotes without building the app there.
 
 ## Risks to resolve first
 
-1. **Traffic via `nettop`**: unverified that per-connection byte counts for
-   the ssh master can be read reliably without privileges. Probe first. If it
-   fails, drop the "active" state; "live" still works.
-2. **`swift test` with Command Line Tools only**: confirm a test framework is
-   usable without Xcode. If not, tests run as a small executable target.
+1. **Traffic via `nettop`**: resolved. `nettop` runs unprivileged and lists
+   the master's open connections by laptop port; an automated test holds a
+   connection open through a forward and sees it. It reports connections
+   open at sample time, which is what "active" now means.
+2. **`swift test` with Command Line Tools only**: resolved. Swift Testing
+   ships with the Command Line Tools but outside the default search path;
+   `make test` adds the framework path when Xcode is not selected.
 3. **`-O forward` failure reporting**: resolved by a probe. A forward onto a
    busy laptop port exits 255 with only "Port forwarding failed", so ssh's
    message cannot identify a port conflict. The allocator's own test-bind is
    therefore the conflict check, and any `-O forward` failure after a
    successful test-bind is treated as a generic error. The same probe
    confirmed the 104-byte limit on the control socket path.
-4. **Launch at login for an ad-hoc signed app**: confirm `SMAppService`
+4. **Launch at login for an ad-hoc signed app**: still unverified. Confirm `SMAppService`
    accepts it. If not, the checkbox is dropped and the README explains adding
    it under Login Items by hand.
-5. **Homebrew formula**: confirm the app builds inside Homebrew's build
+5. **Homebrew formula**: still unverified until the first tagged release
+   exists to build from. Confirm the app builds inside Homebrew's build
    environment (SwiftPM fetching the Yams dependency there), and that launch
    at login survives a `brew upgrade`, since the app's real path under the
    Homebrew prefix includes the version number.

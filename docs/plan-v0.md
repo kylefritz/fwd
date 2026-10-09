@@ -90,58 +90,58 @@ README.md  LICENSE  docs/manual-checklist.md
 
 ### Phase A: core that forwards
 
-- [ ] **A0 Probes.** Package skeleton with Yams; confirm `swift test` runs
+- [x] **A0 Probes.** Package skeleton with Yams; confirm `swift test` runs
   under Command Line Tools; probe `nettop` for per-port bytes. Record results
   in the spec's risk list.
-- [ ] **A1 PortPattern.** `PortPattern.parse(_:) throws -> PortPattern`;
+- [x] **A1 PortPattern.** `PortPattern.parse(_:) throws -> PortPattern`;
   `remoteRange`, `offset`, `isWildcard`, `canonicalText`, `laptopPort(for:)`.
   Tests: all four table rows, bad input, low laptop ports, mismatched stars.
-- [ ] **A2 SSHConfig.** `SSHConfig.hosts(configPath:) -> [String]`;
+- [x] **A2 SSHConfig.** `SSHConfig.hosts(configPath:) -> [String]`;
   `SSHConfig.parseForwards(sshG:) -> [ConfigForward]`. Tests: Include globs,
   pattern hosts skipped, multi-name Host lines, recorded `ssh -G` output.
-- [ ] **A3 PortAllocator.** `allocate(wanted:key:) -> Int?`, `release(_:)`,
+- [x] **A3 PortAllocator.** `allocate(wanted:key:) -> Int?`, `release(_:)`,
   `forget(keyPrefix:)`, injectable `isFree`. Tests: bump, sticky, 50 limit,
   many ports at once get distinct results.
-- [ ] **A4 Store + Paths + Log.** Load/save with atomic writes, change
+- [x] **A4 Store + Paths + Log.** Load/save with atomic writes, change
   detection by mtime, bad file leaves state alone. Tests: round-trip, empty,
   wrong shape, broken YAML not overwritten, log rotation.
-- [ ] **A5 Connection + scanner.** `protocol Connection { start, isAlive,
+- [x] **A5 Connection + scanner.** `protocol Connection { start, isAlive,
   stop, addForward, cancelForward, run }`; `SSHConnection`; scan script and
   parsers for `ss`, `lsof`, `netstat`. Tests: parser fixtures; script constant
   equals `scripts/scan.sh`.
-- [ ] **A6 SSH test harness + first integration tests.** `SSHTestServer`
+- [x] **A6 SSH test harness + first integration tests.** `SSHTestServer`
   (unprivileged sshd, PID-tracked). Tests: bytes flow through a forward,
   cancel stops it, config forwards are not opened.
-- [ ] **A7 Reconciler.** Pure `Reconciler.plan(entries:listening:active:
+- [x] **A7 Reconciler.** Pure `Reconciler.plan(entries:listening:active:
   allocate:) -> (add, cancel)`. Tests: singles always, wildcards follow the
   scan, nil scan keeps singles, removal cancels.
-- [ ] **A8 HostSession + PowerMonitor.** States idle, connecting, connected,
+- [x] **A8 HostSession + PowerMonitor.** States idle, connecting, connected,
   retrying, paused, needsAttention; `Timing` struct for retry and scan
   intervals; fake power events in tests. Integration tests: wildcard follows
   listeners, bump sticks, recovery after master kill and server restart,
   sleep/wake/network events, wrong key ends in needsAttention, in-flight
   failure retries once.
-- [ ] **A9 ConfigForwards + TrafficSampler.** Local status via `lsof`, remote
+- [x] **A9 ConfigForwards + TrafficSampler.** Local status via `lsof`, remote
   status via the scan. Integration test for the three local states.
-- [ ] **A10 AppModel.** Owns sessions, store, allocator, power monitor;
+- [x] **A10 AppModel.** Owns sessions, store, allocator, power monitor;
   add/toggle/remove/clear/turn-all-off; reload on file change. Tests: add
   duplicate turns on, hand edit applies, last entry off disconnects.
 
 ### Phase B: the app
 
-- [ ] **B1 App shell.** `MenuBarExtra` panel + AppKit window, reopen handling,
+- [x] **B1 App shell.** `MenuBarExtra` panel + AppKit window, reopen handling,
   host cards, pills, footer with log items. Build and launch check.
-- [ ] **B2 bundle.sh + Makefile.** `make app`, `make install`, `make test`.
-- [ ] **B3 Terminal command.** `scripts/fwd`, installer to `~/.local/bin`.
-- [ ] **B4 Launch at login.** `SMAppService`; verify with ad-hoc signing.
+- [x] **B2 bundle.sh + Makefile.** `make app`, `make install`, `make test`.
+- [x] **B3 Terminal command.** `scripts/fwd`, installer to `~/.local/bin`.
+- [ ] **B4 Launch at login.** Implemented with `SMAppService`; not yet verified with ad-hoc signing.
 
 ### Phase C: shipping
 
-- [ ] **C1 Updater.** Install kind, version compare, download, verify, swap.
+- [x] **C1 Updater.** Install kind, version compare, download, verify, swap.
   Tests against a local HTTP server.
-- [ ] **C2 CI + release workflows**, Linux scan job.
-- [ ] **C3 Homebrew formula**, verified with `brew install --build-from-source`.
-- [ ] **C4 README, LICENSE, manual checklist.**
+- [x] **C2 CI + release workflows**, Linux scan job.
+- [ ] **C3 Homebrew formula.** Written; not yet verified with `brew install --build-from-source` (needs a tagged release).
+- [x] **C4 README, LICENSE, manual checklist.**
 - [ ] **C5 Final review** against the spec, section by section.
 
 Each task ends with `swift test` green and a commit.
