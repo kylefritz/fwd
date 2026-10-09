@@ -97,24 +97,44 @@ func fetch(_ port: Int) -> String? {
     return String(decoding: buffer[0..<n], as: UTF8.self)
 }
 
-/// A port nothing is using right now.
-func freePort() throws -> Int {
-    let listener = try TestListener()
-    let port = listener.port
-    listener.stop()
-    return port
+/// Hands out ports for tests. Each port is given out once per test run, and
+/// all of them sit below the range the system picks ephemeral ports from, so
+/// suites running in parallel can't be handed the same port and nothing else
+/// grabs one between "found free" and "bound".
+enum TestPorts {
+    private static let lock = NSLock()
+    private static var next = 20000 + Int.random(in: 0..<500) * 20
+
+    /// A free port. The fifty above it are skipped too, so a test that
+    /// expects a bump to a neighbour gets a quiet neighbourhood.
+    static func one() throws -> Int {
+        try lock.withLock {
+            for _ in 0..<400 {
+                let port = next
+                next += 60
+                if next > 44000 { next = 20000 }
+                if PortAllocator.systemIsFree(port) && PortAllocator.systemIsFree(port + 1) { return port }
+            }
+            throw TestFailure("no free port found")
+        }
+    }
+
+    /// The start of ten consecutive free ports whose shifted copy (`+ shift`)
+    /// is free too. A multiple of ten, from a range `one()` never uses.
+    static func blockOfTen(shift: Int) throws -> Int {
+        try lock.withLock {
+            for _ in 0..<200 {
+                let base = Int.random(in: 4500..<4800) * 10
+                let all = Array(base..<(base + 10)) + Array((base + shift)..<(base + shift + 10))
+                if all.allSatisfy(PortAllocator.systemIsFree) { return base }
+            }
+            throw TestFailure("no free block of ports found")
+        }
+    }
 }
 
-/// The start of a block of ten consecutive free ports whose shifted copy
-/// (`+ shift`) is free too. Returned base is a multiple of ten.
-func freeBlockOfTen(shift: Int) throws -> Int {
-    for _ in 0..<200 {
-        let base = Int.random(in: 2000..<5000) * 10
-        let all = Array(base..<(base + 10)) + Array((base + shift)..<(base + shift + 10))
-        if all.allSatisfy(PortAllocator.systemIsFree) { return base }
-    }
-    throw TestFailure("no free block of ports found")
-}
+func freePort() throws -> Int { try TestPorts.one() }
+func freeBlockOfTen(shift: Int) throws -> Int { try TestPorts.blockOfTen(shift: shift) }
 
 final class FakePower: PowerEvents {
     var onEvent: ((PowerEvent) -> Void)?
@@ -128,7 +148,7 @@ final class FakeConnection: Connection, @unchecked Sendable {
     var masterPID: Int32? { alive ? 1 : nil }
     var alive = false
     var startError: ConnectionError?
-    var listening: String = "#ss\n"
+    var listening: String = "#fwd:ss\n"
     var forwards: [Forward] = []
     /// Called inside addForward, before it returns; may throw.
     var onAddForward: ((FakeConnection, Int, Int) throws -> Void)?

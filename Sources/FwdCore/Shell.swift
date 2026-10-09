@@ -1,3 +1,4 @@
+@preconcurrency import Dispatch
 import Foundation
 
 public struct ShellResult: Sendable {
@@ -8,8 +9,12 @@ public struct ShellResult: Sendable {
 }
 
 public enum Shell {
-    /// Runs a program directly (no shell), collecting its output. The process
-    /// is terminated if it outlives `timeout`, and then reports status -1.
+    /// Runs a program directly (no shell) and collects its output.
+    ///
+    /// Always returns: if the program outlives `timeout` it is terminated,
+    /// then killed, and the call reports status -1 whatever the child does.
+    /// It also doesn't wait on output pipes once the program has exited, so
+    /// a background process that inherited them can't hold the call open.
     public static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval = 20) async -> ShellResult {
         await withCheckedContinuation { continuation in
             let process = Process()
@@ -21,63 +26,135 @@ public enum Shell {
             process.standardOutput = out
             process.standardError = err
 
-            let group = DispatchGroup()
-            let box = OutputBox()
+            let state = RunState(continuation)
             for (pipe, isOut) in [(out, true), (err, false)] {
-                group.enter()
-                DispatchQueue.global().async {
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    box.set(String(decoding: data, as: UTF8.self), isOut: isOut)
-                    group.leave()
+                pipe.fileHandleForReading.readabilityHandler = { handle in
+                    let data = handle.availableData
+                    if data.isEmpty {
+                        handle.readabilityHandler = nil
+                        state.reachedEOF()
+                    } else {
+                        state.append(data, isOut: isOut)
+                    }
+                }
+            }
+            let stopReading: @Sendable () -> Void = {
+                out.fileHandleForReading.readabilityHandler = nil
+                err.fileHandleForReading.readabilityHandler = nil
+            }
+
+            process.terminationHandler = { finished in
+                // Normally both pipes hit EOF at once. Allow a moment for the
+                // last bytes, then stop waiting regardless.
+                state.whenDrained(orAfter: 0.5) {
+                    stopReading()
+                    state.finish(status: state.timedOut ? -1 : finished.terminationStatus)
                 }
             }
 
             do {
                 try process.run()
             } catch {
-                try? out.fileHandleForWriting.close()
-                try? err.fileHandleForWriting.close()
-                group.notify(queue: .global()) {
-                    continuation.resume(returning: ShellResult(status: -1, stdout: "", stderr: "\(error.localizedDescription)"))
-                }
+                stopReading()
+                state.finish(status: -1, stderrOverride: error.localizedDescription)
                 return
             }
 
-            nonisolated(unsafe) let timer = DispatchWorkItem {
-                if process.isRunning {
-                    box.timedOut = true
-                    process.terminate()
-                }
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-
-            DispatchQueue.global().async {
-                process.waitUntilExit()
-                timer.cancel()
-                group.notify(queue: .global()) {
-                    let status = box.timedOut ? -1 : process.terminationStatus
-                    continuation.resume(returning: ShellResult(status: status, stdout: box.out, stderr: box.err))
+            let queue = DispatchQueue.global()
+            queue.asyncAfter(deadline: .now() + timeout) {
+                guard !state.isFinished else { return }
+                state.timedOut = true
+                if process.isRunning { process.terminate() }
+                queue.asyncAfter(deadline: .now() + 2) {
+                    guard !state.isFinished else { return }
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                    stopReading()
+                    state.finish(status: -1)
                 }
             }
         }
     }
 }
 
-private final class OutputBox: @unchecked Sendable {
+/// Collects output and makes sure the continuation is resumed exactly once.
+private final class RunState: @unchecked Sendable {
     private let lock = NSLock()
-    private var _out = ""
-    private var _err = ""
+    private var continuation: CheckedContinuation<ShellResult, Never>?
+    private var out = Data()
+    private var err = Data()
+    private var eofCount = 0
+    private var onDrained: (() -> Void)?
     private var _timedOut = false
 
-    func set(_ text: String, isOut: Bool) {
-        lock.lock()
-        if isOut { _out = text } else { _err = text }
-        lock.unlock()
+    init(_ continuation: CheckedContinuation<ShellResult, Never>) {
+        self.continuation = continuation
     }
-    var out: String { lock.lock(); defer { lock.unlock() }; return _out }
-    var err: String { lock.lock(); defer { lock.unlock() }; return _err }
+
+    var isFinished: Bool { lock.withLock { continuation == nil } }
+
     var timedOut: Bool {
-        get { lock.lock(); defer { lock.unlock() }; return _timedOut }
-        set { lock.lock(); _timedOut = newValue; lock.unlock() }
+        get { lock.withLock { _timedOut } }
+        set { lock.withLock { _timedOut = newValue } }
+    }
+
+    func append(_ data: Data, isOut: Bool) {
+        lock.withLock {
+            if isOut { out.append(data) } else { err.append(data) }
+        }
+    }
+
+    func reachedEOF() {
+        let ready: (() -> Void)? = lock.withLock {
+            eofCount += 1
+            guard eofCount >= 2 else { return nil }
+            defer { onDrained = nil }
+            return onDrained
+        }
+        ready?()
+    }
+
+    /// Runs `body` once both pipes have closed, or after `seconds`, whichever
+    /// comes first.
+    func whenDrained(orAfter seconds: TimeInterval, _ body: @escaping @Sendable () -> Void) {
+        let once = Once(body)
+        let already: Bool = lock.withLock {
+            if eofCount >= 2 { return true }
+            onDrained = { once.run() }
+            return false
+        }
+        if already {
+            once.run()
+        } else {
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { once.run() }
+        }
+    }
+
+    func finish(status: Int32, stderrOverride: String? = nil) {
+        let (pending, result): (CheckedContinuation<ShellResult, Never>?, ShellResult) = lock.withLock {
+            let c = continuation
+            continuation = nil
+            return (c, ShellResult(
+                status: status,
+                stdout: String(decoding: out, as: UTF8.self),
+                stderr: stderrOverride ?? String(decoding: err, as: UTF8.self)))
+        }
+        pending?.resume(returning: result)
+    }
+}
+
+private final class Once: @unchecked Sendable {
+    private let lock = NSLock()
+    private var body: (() -> Void)?
+
+    init(_ body: @escaping () -> Void) {
+        self.body = body
+    }
+
+    func run() {
+        let pending: (() -> Void)? = lock.withLock {
+            defer { body = nil }
+            return body
+        }
+        pending?()
     }
 }

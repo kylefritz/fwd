@@ -40,6 +40,10 @@ struct PanelView: View {
                    title: "ports.yaml can't be read",
                    detail: "\(fileError)\nStill running on the last good version. Your file hasn't been changed.")
         }
+        if let configError = model.sshConfigError {
+            Banner(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                   title: "ssh can't read your config", detail: configError)
+        }
         if let actionError {
             Banner(symbol: "xmark.octagon.fill", tint: .red, title: actionError, detail: nil) {
                 self.actionError = nil
@@ -333,9 +337,16 @@ struct FooterView: View {
         do {
             try CommandInstaller.install()
             commandInstalled = CommandInstaller.isInstalled
-            note = CommandInstaller.binDirOnPath
-                ? "Installed. Type fwd in a terminal to open this window."
-                : "Installed at \(CommandInstaller.link.path). Add this to your shell profile:\nexport PATH=\"$HOME/.local/bin:$PATH\""
+            note = "Installed. Type fwd in a terminal to open this window."
+            // Asking the login shell for its PATH can be slow; don't hold up the UI.
+            Task.detached {
+                let onPath = CommandInstaller.binDirOnPath
+                await MainActor.run {
+                    if !onPath {
+                        note = "Installed at \(CommandInstaller.link.path). Add this to your shell profile:\nexport PATH=\"$HOME/.local/bin:$PATH\""
+                    }
+                }
+            }
         } catch {
             note = "Couldn't install the command: \(error.localizedDescription)"
         }

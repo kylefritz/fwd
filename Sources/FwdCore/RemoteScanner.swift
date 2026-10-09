@@ -2,34 +2,39 @@ import Foundation
 
 /// Finds which TCP ports are listening on the remote.
 public enum RemoteScanner {
-    /// Kept identical to `scripts/scan.sh`, which CI runs on Linux. Contains
-    /// no single quotes, so it can be wrapped in `sh -c '...'`.
-    public static let script = """
-    if command -v ss >/dev/null 2>&1; then echo "#ss"; ss -ltnH 2>/dev/null
-    elif command -v netstat >/dev/null 2>&1; then echo "#netstat"; netstat -an 2>/dev/null
-    elif command -v lsof >/dev/null 2>&1; then echo "#lsof"; lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null
-    else echo "#none"; fi
+    /// Kept identical to `scripts/scan.sh`, which CI runs on Linux. It is one
+    /// line with no single quotes, so it can be wrapped in `sh -c '...'` and
+    /// survive any login shell, csh included. If `ss` exists but doesn't
+    /// work, it falls through to the next tool.
+    public static let script = #"""
+    if command -v ss >/dev/null 2>&1 && ss -ltnH >/dev/null 2>&1; then echo "#fwd:ss"; ss -ltnH 2>/dev/null; elif command -v netstat >/dev/null 2>&1; then echo "#fwd:netstat"; netstat -an 2>/dev/null; elif command -v lsof >/dev/null 2>&1; then echo "#fwd:lsof"; lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null; else echo "#fwd:none"; fi
 
-    """
+    """#
 
     /// The command sent to the remote. Wrapped in `sh` so it works whatever
     /// the user's login shell is.
-    public static var command: String { "sh -c '\(script)'" }
+    public static var command: String {
+        "sh -c '\(script.trimmingCharacters(in: .newlines))'"
+    }
 
     /// Listening ports, or nil when the remote has no tool we can use.
     public static func scan(_ connection: Connection) async throws -> Set<Int>? {
         parse(try await connection.run(command))
     }
 
-    /// The first line names the tool; the rest is that tool's output.
+    /// A `#fwd:<tool>` line names the tool; what follows is that tool's
+    /// output. Anything before it (a login banner, an rc file's chatter) is
+    /// skipped.
     public static func parse(_ output: String) -> Set<Int>? {
-        var lines = output.split(whereSeparator: \.isNewline).map(String.init)
-        guard let header = lines.first else { return nil }
-        lines.removeFirst()
-        switch header.trimmingCharacters(in: .whitespaces) {
-        case "#ss": return parseSS(lines)
-        case "#netstat": return parseNetstat(lines)
-        case "#lsof": return parseLsof(lines)
+        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
+        guard let index = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#fwd:") }) else {
+            return nil
+        }
+        let rest = Array(lines[(index + 1)...])
+        switch lines[index].trimmingCharacters(in: .whitespaces) {
+        case "#fwd:ss": return parseSS(rest)
+        case "#fwd:netstat": return parseNetstat(rest)
+        case "#fwd:lsof": return parseLsof(rest)
         default: return nil
         }
     }

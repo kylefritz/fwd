@@ -9,10 +9,13 @@ TAP="kylefritz/homebrew-tap"
 URL="https://github.com/$REPO/archive/refs/tags/v$VERSION.tar.gz"
 
 cd "$(dirname "$0")/.."
-SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
-[ ${#SHA} -eq 64 ] || { echo "Couldn't fetch $URL" >&2; exit 1; }
-
 WORK=$(mktemp -d)
+# Download to a file first: in a pipeline a failed curl would still yield
+# the checksum of nothing.
+curl -fsSL -o "$WORK/source.tar.gz" "$URL" || { echo "Couldn't fetch $URL" >&2; exit 1; }
+[ -s "$WORK/source.tar.gz" ] || { echo "Empty download from $URL" >&2; exit 1; }
+SHA=$(shasum -a 256 "$WORK/source.tar.gz" | cut -d' ' -f1)
+
 git clone --quiet "https://x-access-token:${TAP_TOKEN}@github.com/$TAP.git" "$WORK/tap"
 mkdir -p "$WORK/tap/Formula"
 sed -e "s|^  url .*|  url \"$URL\"|" -e "s|^  sha256 .*|  sha256 \"$SHA\"|" \

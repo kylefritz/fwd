@@ -82,7 +82,7 @@ import Testing
         defer { server.cleanup() }
         let remote = try TestListener(greeting: "remote")
         // Something else on the laptop already has the wanted port.
-        let squatter = try TestListener(greeting: "squatter")
+        let squatter = try TestListener(port: try freePort(), greeting: "squatter")
         let wanted = squatter.port
         let allocator = PortAllocator()
         let s = makeSession(server, allocator: allocator)

@@ -30,7 +30,11 @@ Log: ~/Library/Logs/fwd/fwd.log
 USAGE
     ;;
   "")
-    exec /usr/bin/open "$app" --args --show-window
+    # By bundle identifier, so a copy that is already running comes to the
+    # front even if it was started from another path (as after an upgrade).
+    # Falls back to this copy when macOS doesn't know the identifier yet.
+    /usr/bin/open -b io.github.kylefritz.fwd --args --show-window 2>/dev/null ||
+      exec /usr/bin/open "$app" --args --show-window
     ;;
   *)
     echo "fwd: unknown argument '$1' (try fwd --help)" >&2

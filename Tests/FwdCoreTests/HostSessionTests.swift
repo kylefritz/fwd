@@ -52,18 +52,18 @@ import Testing
 
     @Test func wildcardFollowsTheScan() async throws {
         let factory = Factory()
-        factory.configure = { $0.listening = "#ss\nLISTEN 0 1 127.0.0.1:3001 0.0.0.0:*\n" }
+        factory.configure = { $0.listening = "#fwd:ss\nLISTEN 0 1 127.0.0.1:3001 0.0.0.0:*\n" }
         let s = session(factory)
         await s.setEntries([Entry(port: "3*** -> 4***")])
         try await eventually("3001 forwarded") { s.active[3001]?.local == 4001 }
-        factory.made[0].listening = "#ss\nLISTEN 0 1 127.0.0.1:3002 0.0.0.0:*\n"
+        factory.made[0].listening = "#fwd:ss\nLISTEN 0 1 127.0.0.1:3002 0.0.0.0:*\n"
         try await eventually("follows to 3002") { s.active.keys.sorted() == [3002] }
         #expect(factory.made[0].forwards.map(\.remote) == [3002])
     }
 
     @Test func unscannableRemoteStillForwardsSinglePorts() async throws {
         let factory = Factory()
-        factory.configure = { $0.listening = "#none\n" }
+        factory.configure = { $0.listening = "#fwd:none\n" }
         let s = session(factory)
         await s.setEntries([Entry(port: "3000"), Entry(port: "31**")])
         try await eventually("single port forwarded") { s.active[3000] != nil }
@@ -74,7 +74,7 @@ import Testing
     @Test func manyWildcardPortsAtOnceGetDistinctLaptopPorts() async throws {
         let factory = Factory()
         let lines = (3000..<3040).map { "LISTEN 0 1 127.0.0.1:\($0) 0.0.0.0:*" }.joined(separator: "\n")
-        factory.configure = { $0.listening = "#ss\n\(lines)\n" }
+        factory.configure = { $0.listening = "#fwd:ss\n\(lines)\n" }
         // Odd laptop ports are taken by other programs.
         let s = session(factory, allocator: PortAllocator(isFree: { $0 % 2 == 0 }))
         await s.setEntries([Entry(port: "30**")])

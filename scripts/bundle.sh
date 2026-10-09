@@ -5,7 +5,9 @@ set -eu
 
 cd "$(dirname "$0")/.."
 VERSION="${VERSION:-dev}"
-BINARY="$(swift build -c release --show-bin-path)/fwd"
+# Not `swift build --show-bin-path`: that starts SwiftPM's sandbox, which
+# fails inside Homebrew's own build sandbox.
+BINARY=".build/release/fwd"
 [ -x "$BINARY" ] || { echo "No release binary; run 'swift build -c release' first." >&2; exit 1; }
 
 APP="build/fwd.app"
@@ -30,6 +32,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSUIElement</key><true/>
+  <key>LSMultipleInstancesProhibited</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>MIT License</string>
 </dict>

@@ -21,7 +21,9 @@ import Testing
                                  let c = FakeConnection()
                                  box.made[host, default: []].append(c)
                                  return c
-                             })
+                             },
+                             // These tests are about the model, not this machine's ports.
+                             isPortFree: { _ in true })
             self.box = box
         }
 
@@ -111,6 +113,24 @@ import Testing
         try "hosts:\n  staging:\n    - port: 5173\n".write(to: rig.model.paths.portsFile, atomically: true, encoding: .utf8)
         await rig.model.tick()
         try await eventually("picked up") { rig.pill("staging", "5173")?.local == 5173 }
+        await rig.model.shutdown()
+    }
+
+    @Test func anActionRightAfterAHandEditKeepsTheEdit() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        try await rig.model.add(host: "devbox", text: "3000")
+        // Edited by hand; no tick has happened yet.
+        try "hosts:\n  devbox:\n    - port: 3000\n  staging:\n    - port: 5173\n".write(to: rig.model.paths.portsFile, atomically: true, encoding: .utf8)
+        try await rig.model.add(host: "homelab", text: "8080")
+        let saved = try Store(paths: rig.model.paths).loadPorts()
+        #expect(saved.hosts.keys.sorted() == ["devbox", "homelab", "staging"])
+
+        // And a broken hand edit blocks the action instead of being replaced.
+        let broken = "hosts: [oops\n"
+        try broken.write(to: rig.model.paths.portsFile, atomically: true, encoding: .utf8)
+        await #expect(throws: AppModelError.self) { try await rig.model.add(host: "homelab", text: "9090") }
+        #expect(rig.portsText == broken)
         await rig.model.shutdown()
     }
 

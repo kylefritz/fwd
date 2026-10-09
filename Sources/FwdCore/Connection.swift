@@ -77,6 +77,28 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     /// Closes masters left behind by a run that was killed or crashed.
     /// Without this they would keep their laptop ports forever. Only touches
     /// sockets in fwd's own socket folder.
+    /// Closes every master in fwd's socket folder without using Swift
+    /// concurrency, for use while the app is quitting. Each one gets a couple
+    /// of seconds at most.
+    public static func closeAllBlocking(paths: Paths) {
+        let sockets = (try? FileManager.default.contentsOfDirectory(atPath: paths.socketDir.path)) ?? []
+        for name in sockets {
+            let socket = paths.socketDir.appendingPathComponent(name).path
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: sshPath)
+            process.arguments = ["-F", "none", "-S", socket, "-O", "exit", "--", "quit"]
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            if (try? process.run()) != nil {
+                let deadline = Date().addingTimeInterval(2)
+                while process.isRunning, Date() < deadline { usleep(20_000) }
+                if process.isRunning { process.terminate() }
+            }
+            try? FileManager.default.removeItem(atPath: socket)
+        }
+    }
+
     public static func closeLeftovers(paths: Paths, log: Log) async {
         let sockets = (try? FileManager.default.contentsOfDirectory(atPath: paths.socketDir.path)) ?? []
         for name in sockets {
@@ -113,6 +135,8 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
             "-o", "ConnectTimeout=\(connectTimeout)",
             "-o", "ControlPersist=no",
+            // The master must stay our child so its exit can be observed.
+            "-o", "ForkAfterAuthentication=no",
             "--", host,
         ]
         let errPipe = Pipe()
@@ -193,11 +217,13 @@ public final class SSHConnection: Connection, @unchecked Sendable {
 
     /// Sorts an ssh failure into "a person has to fix this" or "try again later".
     public static func classify(stderr: String) -> ConnectionError {
+        // Phrases ssh itself (or a sign-in proxy) prints. Kept specific so a
+        // server's login banner can't be mistaken for one of them.
         let needsHuman = [
-            "Permission denied", "Host key verification failed",
+            "Permission denied (", "Host key verification failed",
             "REMOTE HOST IDENTIFICATION HAS CHANGED", "Too many authentication failures",
-            "No more authentication methods", "passphrase", "sign_and_send_pubkey",
-            "open the following URL", "Please open", "browser",
+            "No more authentication methods", "sign_and_send_pubkey",
+            "open the following URL and log in",
             "Bad configuration option", "Bad owner or permissions",
         ]
         let message = stderr.isEmpty ? "ssh exited without a message" : lastLine(stderr)
@@ -208,7 +234,9 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         return .unreachable(message)
     }
 
-    /// Asks the master to add or drop one forward. This is the one call that
+    /// Asks the master to add or drop one forward. The target is `localhost`
+    /// rather than 127.0.0.1 so a server listening only on IPv6 is reached
+    /// too; the remote sshd tries both. This is the one call that
     /// can't carry `ClearAllForwardings`, since that would also clear the
     /// `-L` being requested. It reads no config file instead (`-F none`), so
     /// there are no config forwards for it to drag along; the socket is all
@@ -216,7 +244,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     private func forwardRequest(_ verb: String, local: Int, remote: Int) async -> ShellResult {
         await Shell.run(Self.sshPath, [
             "-F", "none", "-o", "BatchMode=yes", "-S", socketPath,
-            "-O", verb, "-L", "127.0.0.1:\(local):127.0.0.1:\(remote)", "--", host,
+            "-O", verb, "-L", "127.0.0.1:\(local):localhost:\(remote)", "--", host,
         ], timeout: 15)
     }
 

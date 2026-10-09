@@ -142,6 +142,6 @@ README.md  LICENSE  docs/manual-checklist.md
 - [x] **C2 CI + release workflows**, Linux scan job.
 - [ ] **C3 Homebrew formula.** Written; not yet verified with `brew install --build-from-source` (needs a tagged release).
 - [x] **C4 README, LICENSE, manual checklist.**
-- [ ] **C5 Final review** against the spec, section by section.
+- [x] **C5 Final review** against the spec, by an independent reviewer; findings fixed.
 
 Each task ends with `swift test` green and a commit.

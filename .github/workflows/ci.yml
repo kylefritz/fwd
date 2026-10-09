@@ -33,5 +33,5 @@ jobs:
           sleep 1
           sh scripts/scan.sh > out.txt
           head -1 out.txt
-          test "$(head -1 out.txt)" = "#ss"
+          test "$(head -1 out.txt)" = "#fwd:ss"
           grep -E '^LISTEN .*:38123 ' out.txt

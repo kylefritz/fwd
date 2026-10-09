@@ -51,8 +51,45 @@ public final class PortAllocator {
         if sticky.count != before { onStickyChange?() }
     }
 
-    /// True if nothing is listening on 127.0.0.1:port, checked by binding it.
+    /// True if nothing answers on localhost:port and ssh could bind it.
+    ///
+    /// Binding alone isn't enough: a server listening on all interfaces, or
+    /// only on IPv6, still lets 127.0.0.1 be bound, and a forward there
+    /// would shadow it. So this also tries to connect over both IPv4 and
+    /// IPv6 and treats any answer as "taken".
     public static func systemIsFree(_ port: Int) -> Bool {
+        canBind(port) && !answers(port, family: AF_INET) && !answers(port, family: AF_INET6)
+    }
+
+    private static func answers(_ port: Int, family: Int32) -> Bool {
+        let fd = socket(family, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        if family == AF_INET {
+            var addr = sockaddr_in()
+            addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_port = in_port_t(port).bigEndian
+            addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+            return withUnsafePointer(to: &addr) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            } == 0
+        }
+        var addr = sockaddr_in6()
+        addr.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        addr.sin6_family = sa_family_t(AF_INET6)
+        addr.sin6_port = in_port_t(port).bigEndian
+        addr.sin6_addr = in6addr_loopback
+        return withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size))
+            }
+        } == 0
+    }
+
+    private static func canBind(_ port: Int) -> Bool {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }

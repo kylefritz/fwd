@@ -147,6 +147,11 @@ final class TestHTTPServer: @unchecked Sendable {
         // Nothing is replaced until the user says so.
         #expect(Updater.bundleVersion(installed) == "1.0.0")
 
+        // Checking again must neither download again nor hide the offer.
+        await u.check()
+        #expect(u.state == .ready(version: "1.1.0", notes: URL(string: "https://example.com/notes")))
+        #expect(server.hits.filter { $0 == "/fwd.zip" }.count == 1)
+
         let launch = try u.install()
         #expect(launch == installed)
         #expect(Updater.bundleVersion(installed) == "1.1.0")

@@ -18,7 +18,8 @@ public enum PillState: Equatable, Sendable {
 /// One forwarded port under a wildcard entry.
 public struct PillPort: Identifiable, Equatable, Sendable {
     public let remote: Int
-    public let local: Int
+    /// Nil when no laptop port could be found for it.
+    public let local: Int?
     public let state: PillState
     public var id: Int { remote }
 }
@@ -80,6 +81,8 @@ public final class AppModel: ObservableObject {
     /// Set while ports.yaml can't be parsed; the app keeps its last good state.
     @Published public private(set) var fileError: String?
     @Published public private(set) var sshConfigMissing = false
+    /// ssh's own complaint when it can't parse the config, if any.
+    @Published public private(set) var sshConfigError: String?
     @Published public private(set) var overall: OverallState = .idle
 
     public let paths: Paths
@@ -108,14 +111,15 @@ public final class AppModel: ObservableObject {
     private var forwardsLoad: Task<Void, Never>?
 
     public init(paths: Paths = .fromEnvironment(), power: PowerEvents, timing: Timing = Timing(),
-                log: Log? = nil, makeConnection: ((String) -> Connection)? = nil) {
+                log: Log? = nil, makeConnection: ((String) -> Connection)? = nil,
+                isPortFree: @escaping (Int) -> Bool = PortAllocator.systemIsFree) {
         self.paths = paths
         self.power = power
         self.timing = timing
         let log = log ?? Log(file: paths.logFile)
         self.log = log
         self.store = Store(paths: paths)
-        self.allocator = PortAllocator(sticky: Store(paths: paths).loadSticky())
+        self.allocator = PortAllocator(sticky: Store(paths: paths).loadSticky(), isFree: isPortFree)
         self.cleansLeftovers = (makeConnection == nil)
         self.makeConnection = makeConnection ?? { host in SSHConnection(host: host, paths: paths, log: log) }
         allocator.onStickyChange = { [weak self] in
@@ -224,6 +228,9 @@ public final class AppModel: ObservableObject {
         forwardsLoad?.cancel()
         let paths = self.paths
         forwardsLoad = Task { [weak self] in
+            let problem = await ConfigForwards.configProblem(paths: paths)
+            if Task.isCancelled { return }
+            self?.noteConfigProblem(problem)
             var found: [String: [ConfigForward]] = [:]
             for host in hosts {
                 if Task.isCancelled { return }
@@ -237,10 +244,16 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    private func noteConfigProblem(_ problem: String?) {
+        if let problem, problem != sshConfigError { log.write("ssh config problem: \(problem)") }
+        sshConfigError = problem
+    }
+
     // MARK: Actions
 
     public func add(host: String, text: String) async throws {
         let pattern = try PortPattern.parse(text)
+        await syncFromDisk()
         var entries = file.hosts[host] ?? []
         if let index = entries.firstIndex(where: { $0.port == pattern.text }) {
             entries[index].on = true
@@ -251,6 +264,7 @@ public final class AppModel: ObservableObject {
     }
 
     public func toggle(host: String, text: String) async throws {
+        await syncFromDisk()
         var entries = file.hosts[host] ?? []
         guard let index = entries.firstIndex(where: { $0.port == text }) else { return }
         entries[index].on.toggle()
@@ -259,17 +273,20 @@ public final class AppModel: ObservableObject {
     }
 
     public func remove(host: String, text: String) async throws {
+        await syncFromDisk()
         let entries = (file.hosts[host] ?? []).filter { $0.port != text }
         forget(host: host, text: text)
         try await update(host: host, entries: entries)
     }
 
     public func clearAll(host: String) async throws {
+        await syncFromDisk()
         allocator.forget(keyPrefix: "\(host)|")
         try await update(host: host, entries: [])
     }
 
     public func turnAllOff() async throws {
+        await syncFromDisk()
         guard fileError == nil else { throw AppModelError.portsFileBroken }
         for (host, entries) in file.hosts {
             file.hosts[host] = entries.map { Entry(port: $0.port, on: false) }
@@ -285,6 +302,12 @@ public final class AppModel: ObservableObject {
 
     private func forget(host: String, text: String) {
         allocator.forget(keyPrefix: "\(host)|\(text)|")
+    }
+
+    /// A hand edit made a moment ago may not have been noticed yet. Load it
+    /// before changing anything, so an action never overwrites it.
+    private func syncFromDisk() async {
+        if store.portsModified() != portsStamp { await reloadPorts(initial: false) }
     }
 
     private func update(host: String, entries: [Entry]) async throws {
@@ -303,10 +326,14 @@ public final class AppModel: ObservableObject {
 
     /// Pushes the desired entries into the sessions.
     private func apply() async {
-        for (host, entries) in file.hosts {
+        // Each step awaits, and another action can change `file` meanwhile,
+        // so read the current entries at every step instead of a snapshot.
+        for host in Array(file.hosts.keys) {
+            guard let entries = file.hosts[host] else { continue }
             await session(for: host).setEntries(entries)
         }
         for (host, session) in sessions where file.hosts[host] == nil {
+            guard file.hosts[host] == nil else { continue }
             await session.setEntries([])
         }
         rebuild()
@@ -447,13 +474,24 @@ public final class AppModel: ObservableObject {
             if session.scanUnavailable {
                 return make(.blocked("Can't scan this host for listening ports"), wildcard: true)
             }
-            let ports = session.active.values
+            var ports = session.active.values
                 .filter { $0.entry == pattern.text }
-                .sorted { $0.remote < $1.remote }
                 .map { PillPort(remote: $0.remote, local: $0.local,
                                 state: portState(remote: $0.remote, local: $0.local, host: host, session: session)) }
-            let state: PillState = ports.isEmpty ? .waiting
-                : (ports.contains { $0.state == .active } ? .active : .live)
+            for (remote, reason) in session.blocked
+            where pattern.remoteRange.contains(remote) && session.active[remote] == nil {
+                ports.append(PillPort(remote: remote, local: nil, state: .blocked(reason)))
+            }
+            ports.sort { $0.remote < $1.remote }
+            let up = ports.filter { $0.local != nil }
+            let state: PillState
+            if ports.isEmpty {
+                state = .waiting
+            } else if up.isEmpty, case .blocked(let reason)? = ports.first?.state {
+                state = .blocked(reason)
+            } else {
+                state = up.contains { $0.state == .active } ? .active : .live
+            }
             return make(state, wildcard: true, ports: ports)
         }
 

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import FwdCore
 
@@ -76,6 +77,52 @@ import Testing
             }
         }
         #expect(seen.count == 60)
+    }
+
+    /// A dev server on all interfaces, or only on IPv6, still lets 127.0.0.1
+    /// be bound. It must count as taken or a forward would shadow it.
+    @Test func systemCheckSeesServersOnAllInterfacesAndOnIPv6() throws {
+        let port = try freePort()
+        #expect(PortAllocator.systemIsFree(port))
+
+        // Real servers set SO_REUSEADDR; without it a just-probed port can
+        // briefly refuse a wildcard bind.
+        var yes: Int32 = 1
+        func becomesFree() -> Bool {
+            for _ in 0..<40 {
+                if PortAllocator.systemIsFree(port) { return true }
+                usleep(25_000)
+            }
+            return false
+        }
+        let any4 = socket(AF_INET, SOCK_STREAM, 0)
+        setsockopt(any4, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var a4 = sockaddr_in()
+        a4.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        a4.sin_family = sa_family_t(AF_INET)
+        a4.sin_port = in_port_t(port).bigEndian
+        a4.sin_addr.s_addr = INADDR_ANY
+        let bound4 = withUnsafePointer(to: &a4) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(any4, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        #expect(bound4 == 0 && listen(any4, 4) == 0)
+        #expect(!PortAllocator.systemIsFree(port), "server on 0.0.0.0 should make the port taken")
+        close(any4)
+        #expect(becomesFree(), "the port should be free again once the server is gone")
+
+        let v6 = socket(AF_INET6, SOCK_STREAM, 0)
+        setsockopt(v6, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var a6 = sockaddr_in6()
+        a6.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        a6.sin6_family = sa_family_t(AF_INET6)
+        a6.sin6_port = in_port_t(port).bigEndian
+        a6.sin6_addr = in6addr_loopback
+        let bound6 = withUnsafePointer(to: &a6) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(v6, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) }
+        }
+        #expect(bound6 == 0 && listen(v6, 4) == 0)
+        #expect(!PortAllocator.systemIsFree(port), "server on [::1] should make the port taken")
+        close(v6)
     }
 
     @Test func systemCheckSeesARealListener() throws {

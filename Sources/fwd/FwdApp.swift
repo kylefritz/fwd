@@ -64,8 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var visibleSurfaces = 0
     private var updateTimer: Timer?
-    private var quitting = false
-    private var cleanedUp = false
+    private var isDuplicate = false
 
     static var version: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
@@ -73,6 +72,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // Two copies would close each other's connections. If one is already
+        // running, hand over to it and leave.
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: Paths.bundleIdentifier)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        if Bundle.main.bundleIdentifier == Paths.bundleIdentifier, let running = others.first,
+           !CommandLine.arguments.contains("--snapshot") {
+            isDuplicate = true
+            running.activate()
+            NSApp.terminate(nil)
+            return
+        }
         power.start()
         Task {
             await model.start()
@@ -117,21 +127,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
-    /// Quitting closes the ssh connections first. The first request is
-    /// declined while that happens and then repeated; waiting inside
-    /// `.terminateLater` instead would stall, because the cleanup needs the
-    /// main queue that AppKit is then blocking.
+    /// Quitting closes the ssh connections first, synchronously, so that a
+    /// logout or restart is never held up or cancelled by fwd. Each
+    /// connection gets a couple of seconds at most.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if cleanedUp { return .terminateNow }
-        if !quitting {
-            quitting = true
-            Task {
-                await model.shutdown()
-                cleanedUp = true
-                NSApp.terminate(nil)
-            }
+        if !isDuplicate {
+            SSHConnection.closeAllBlocking(paths: paths)
+            model.log.write("fwd stopped")
+            model.log.flush()
         }
-        return .terminateCancel
+        return .terminateNow
     }
 
     func showWindow() {
@@ -157,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func surfaceAppeared() {
         visibleSurfaces += 1
         model.setVisible(true)
+        updater.noticeHomebrewUpgrade()
     }
 
     func surfaceDisappeared() {
@@ -195,7 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var command = "ssh"
         if let config = paths.sshConfigOverride { command += " -F \(quote(config.path))" }
         command += " -- \(quote(host))"
-        let body = "#!/bin/sh\necho \"fwd: connecting to \(host.replacingOccurrences(of: "\"", with: ""))...\"\nexec \(command)\n"
+        // The host name only ever appears single-quoted, so nothing in it
+        // can be read by the shell as code.
+        let body = "#!/bin/sh\nprintf 'fwd: connecting to %s\\n' \(quote(host))\nexec \(command)\n"
         do {
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)

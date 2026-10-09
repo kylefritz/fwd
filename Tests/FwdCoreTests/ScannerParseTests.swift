@@ -5,7 +5,7 @@ import Testing
 @Suite struct ScannerParseTests {
     @Test func ss() {
         let out = """
-        #ss
+        #fwd:ss
         LISTEN 0      128          0.0.0.0:22         0.0.0.0:*
         LISTEN 0      511        127.0.0.1:3000       0.0.0.0:*
         LISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*
@@ -18,7 +18,7 @@ import Testing
 
     @Test func netstatOnMacOS() {
         let out = """
-        #netstat
+        #fwd:netstat
         Active Internet connections (including servers)
         Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)
         tcp4       0      0  127.0.0.1.3000         *.*                    LISTEN
@@ -32,7 +32,7 @@ import Testing
 
     @Test func netstatOnLinux() {
         let out = """
-        #netstat
+        #fwd:netstat
         Active Internet connections (servers and established)
         Proto Recv-Q Send-Q Local Address           Foreign Address         State
         tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN
@@ -44,7 +44,7 @@ import Testing
 
     @Test func lsof() {
         let out = """
-        #lsof
+        #fwd:lsof
         COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
         node    81234   me   22u  IPv4 0x1234567890abcdef      0t0  TCP 127.0.0.1:3000 (LISTEN)
         ruby    81300   me   10u  IPv6 0x1234567890abcdee      0t0  TCP [::1]:4567 (LISTEN)
@@ -53,12 +53,42 @@ import Testing
         #expect(RemoteScanner.parse(out) == [3000, 4567, 8000])
     }
 
+    @Test func chatterBeforeTheHeaderIsSkipped() {
+        let out = """
+        Welcome to devbox!
+        You have new mail.
+        #fwd:ss
+        LISTEN 0 128 127.0.0.1:3000 0.0.0.0:*
+        """
+        #expect(RemoteScanner.parse(out) == [3000])
+    }
+
+    @Test func theCommandIsOneLineSoAnyLoginShellAcceptsIt() {
+        #expect(!RemoteScanner.command.contains("\n"))
+        #expect(RemoteScanner.command.hasPrefix("sh -c '") && RemoteScanner.command.hasSuffix("'"))
+    }
+
+    @Test func failuresAreSortedIntoRetryOrAskAPerson() {
+        func needsPerson(_ stderr: String) -> Bool {
+            if case .needsAttention = SSHConnection.classify(stderr: stderr) { return true }
+            return false
+        }
+        #expect(needsPerson("me@host: Permission denied (publickey)."))
+        #expect(needsPerson("Host key verification failed."))
+        #expect(needsPerson("Please open the following URL and log in with your account:\nhttps://example.com"))
+        #expect(!needsPerson("ssh: connect to host 10.0.0.1 port 22: Operation timed out"))
+        #expect(!needsPerson("ssh: Could not resolve hostname devbox: nodename nor servname provided"))
+        #expect(!needsPerson(""))
+        // A server banner mentioning these words must not stop retries.
+        #expect(!needsPerson("Use your browser to read the policy. Enter your passphrase carefully.\nConnection timed out during banner exchange"))
+    }
+
     @Test func noToolOrGarbageMeansUnknownNotCrash() {
-        #expect(RemoteScanner.parse("#none\n") == nil)
+        #expect(RemoteScanner.parse("#fwd:none\n") == nil)
         #expect(RemoteScanner.parse("") == nil)
         #expect(RemoteScanner.parse("Welcome to devbox!\nLast login: yesterday\n") == nil)
-        #expect(RemoteScanner.parse("#ss\ngarbage line\nLISTEN x y notanaddress z\nLISTEN 0 1 1.2.3.4:99999 *\n") == [])
-        #expect(RemoteScanner.parse("#ss\n") == [])
+        #expect(RemoteScanner.parse("#fwd:ss\ngarbage line\nLISTEN x y notanaddress z\nLISTEN 0 1 1.2.3.4:99999 *\n") == [])
+        #expect(RemoteScanner.parse("#fwd:ss\n") == [])
     }
 
     @Test func scriptMatchesTheFileCIRunsOnLinux() throws {

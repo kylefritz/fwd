@@ -77,6 +77,8 @@ public final class Updater: ObservableObject {
     private let session: URLSession
     private let verifySignature: (URL) async -> Bool
     private var staged: URL?
+    private let stagingDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fwd-update-\(UUID().uuidString.prefix(8))")
 
     public init(releasesURL: URL, bundleURL: URL, currentVersion: String, log: Log,
                 kind: InstallKind? = nil, session: URLSession = .shared,
@@ -124,7 +126,8 @@ public final class Updater: ObservableObject {
     /// Network trouble is logged and otherwise ignored; the next check retries.
     public func check() async {
         let before = state
-        state = .checking
+        // Keep a waiting "Restart to update" on screen while re-checking.
+        if case .ready = before {} else { state = .checking }
         do {
             var request = URLRequest(url: releasesURL)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -160,7 +163,12 @@ public final class Updater: ObservableObject {
                     state = .upToDate
                     return
                 }
-                await prepare(release, version: latest)
+                // Already downloaded and verified: nothing more to do.
+                if case .ready(let version, _) = before, Version(version) == latest, staged != nil {
+                    state = before
+                    return
+                }
+                await prepare(release, version: latest, fallback: before)
             }
         } catch {
             log.write("update check failed: \(error.localizedDescription)")
@@ -168,7 +176,20 @@ public final class Updater: ObservableObject {
         }
     }
 
-    private func prepare(_ release: Release, version: Version) async {
+    /// If a newer version is already installed by Homebrew, offers the
+    /// restart. Cheap and offline, so the app calls it whenever its panel opens.
+    public func noticeHomebrewUpgrade() {
+        guard kind == .homebrew, let running = Version(currentVersion),
+              let current = Self.homebrewCurrentBundle(for: bundleURL),
+              let onDisk = Self.bundleVersion(current).flatMap(Version.init), onDisk > running else { return }
+        if case .ready = state { return }
+        var notes: URL?
+        if case .available(_, let url) = state { notes = url }
+        staged = current
+        state = .ready(version: onDisk.description, notes: notes)
+    }
+
+    private func prepare(_ release: Release, version: Version, fallback: UpdateState) async {
         func manual(_ reason: String) {
             log.write("update \(version) needs a manual install: \(reason)")
             state = .manual(version: version.description, page: release.html_url, reason: reason)
@@ -180,7 +201,11 @@ public final class Updater: ObservableObject {
             return manual("the release has no \(Self.assetName)")
         }
         do {
-            let work = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-update-\(UUID().uuidString)")
+            // One staging folder per running app, replaced each time, so
+            // repeated checks don't accumulate downloads.
+            let work = stagingDir
+            try? FileManager.default.removeItem(at: work)
+            staged = nil
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             let (downloaded, response) = try await session.download(from: asset.browser_download_url)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
@@ -207,7 +232,7 @@ public final class Updater: ObservableObject {
             state = .ready(version: version.description, notes: release.html_url)
         } catch {
             log.write("update download failed: \(error.localizedDescription)")
-            state = .idle
+            if case .ready = fallback { state = .idle } else { state = (fallback == .checking) ? .idle : fallback }
         }
     }
 

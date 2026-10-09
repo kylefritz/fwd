@@ -112,8 +112,11 @@ Units:
 - **PortPattern**: parses entry text into a remote range plus laptop offset.
   Pure logic.
 - **PortAllocator**: given a wanted laptop port and the set of ports fwd
-  already holds, returns a free one by test-binding `127.0.0.1`. Holds the
-  sticky assignments.
+  already holds, returns a free one. A port counts as free only if
+  `127.0.0.1` can be bound and nothing answers a connection on it over IPv4
+  or IPv6; binding alone would miss a server listening on all interfaces or
+  only on `::1`, which a forward would then shadow. Holds the sticky
+  assignments.
 - **Connection**: one per host that has anything enabled. Owns the ssh master
   process and control socket. Operations: start, check, stop, add forward,
   cancel forward, run a remote command.
@@ -121,7 +124,10 @@ Units:
   one POSIX `sh` snippet that tries `ss -ltnH`, then `netstat -an`, then
   `lsof -nP -iTCP -sTCP:LISTEN`, so it works on Linux, macOS and BSD remotes
   whatever the user's login shell is. `netstat` comes before `lsof` because
-  an unprivileged `lsof` only sees the user's own processes.
+  an unprivileged `lsof` only sees the user's own processes. The script is a
+  single line (csh rejects multi-line quoted commands), falls through when
+  `ss` exists but fails, and marks its output with a `#fwd:<tool>` line so
+  anything a login script prints before it is ignored.
 - **TrafficSampler**: which forwarded laptop ports have a connection open,
   from `nettop` samples of the ssh master process.
 - **Reconciler**: per host, diffs desired forwards (entries, expanded against
@@ -188,7 +194,9 @@ ssh -M -N -S <socket> \
   would otherwise break a background connection or the scan command.
 - Host names are passed after `--` and never through a shell, so an unusual
   alias cannot be read as an option or a command.
-- Add: `ssh -F none -S <socket> -O forward -L 127.0.0.1:<laptop>:127.0.0.1:<remote> <host>`
+- Add: `ssh -F none -S <socket> -O forward -L 127.0.0.1:<laptop>:localhost:<remote> <host>`.
+  The target is `localhost` so a remote server listening only on IPv6 is
+  reached too.
 - Cancel: same with `-O cancel`.
 - Add and cancel are the exception to the rule above. `ClearAllForwardings`
   on such a call also clears the `-L` being requested, so the call succeeds
@@ -196,7 +204,11 @@ ssh -M -N -S <socket> \
   leaves no config forwards to drag along; the socket is all they need.
 - At launch, fwd asks any master still listening in its socket folder to
   exit. A run that was killed or crashed would otherwise leave masters
-  holding laptop ports. At quit, every master is closed before the app exits.
+  holding laptop ports. At quit, every master is closed synchronously
+  (about two seconds each at most) before the app exits, so a logout or
+  restart is never delayed or cancelled.
+- Only one copy of the app runs. A second launch brings the first to the
+  front and exits, since two copies would close each other's connections.
 - Health: `ssh -S <socket> -O check <host>`.
 - Scan: `ssh -S <socket> <host> '<scan command>'`.
 
@@ -385,6 +397,8 @@ collects and sends nothing else. The log stays on the machine.
   downloaded in the background, unpacked to a temporary folder and checked:
   bundle identifier matches, version matches the tag, `codesign --verify`
   passes.
+- A version that is already downloaded and verified is not downloaded again
+  by later checks, and its offer stays on screen while they run.
 - When it is ready the panel shows "fwd X.Y.Z is ready" with a "Restart to
   update" button and a link to the release notes, and the menu bar icon gets
   a small dot. Nothing restarts without the click.

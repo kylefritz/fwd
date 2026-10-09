@@ -200,17 +200,26 @@ struct PillView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(pill.ports) { port in
                         let portStyle = StateStyle.pill(port.state)
-                        Button { openLocal(port.local) } label: {
+                        if let local = port.local {
+                            Button { openLocal(local) } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: portStyle.symbol).foregroundStyle(portStyle.color).font(.caption2)
+                                    Text(verbatim: port.remote == local ? "\(port.remote)" : "\(port.remote) → \(local)")
+                                        .font(.caption.monospacedDigit())
+                                    Image(systemName: "arrow.up.right.square").font(.caption2).foregroundStyle(.blue)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .help(Text(verbatim: "Open http://localhost:\(local)"))
+                            .accessibilityLabel(Text(verbatim: "Port \(port.remote) on laptop \(local), \(portStyle.words)"))
+                        } else {
                             HStack(spacing: 4) {
                                 Image(systemName: portStyle.symbol).foregroundStyle(portStyle.color).font(.caption2)
-                                Text(verbatim: port.remote == port.local ? "\(port.remote)" : "\(port.remote) → \(port.local)")
-                                    .font(.caption.monospacedDigit())
-                                Image(systemName: "arrow.up.right.square").font(.caption2).foregroundStyle(.blue)
+                                Text(verbatim: "\(port.remote)").font(.caption.monospacedDigit())
                             }
+                            .help(Text(verbatim: portStyle.words))
+                            .accessibilityLabel(Text(verbatim: "Port \(port.remote), \(portStyle.words)"))
                         }
-                        .buttonStyle(.plain)
-                        .help(Text(verbatim: "Open http://localhost:\(port.local)"))
-                        .accessibilityLabel(Text(verbatim: "Port \(port.remote) on laptop \(port.local), \(portStyle.words)"))
                     }
                 }
                 .padding(.leading, 4)

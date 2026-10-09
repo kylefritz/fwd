@@ -246,7 +246,10 @@ public final class HostSession {
             }
             guard gen == generation else { return }
 
-            // The link died by itself.
+            // The link died by itself. Let any reconcile pass still in flight
+            // finish first, so it can't record a forward after the cleanup.
+            await reconcileTail?.value
+            guard gen == generation else { return }
             releaseAll()
             connection = nil
             await conn.stop()
@@ -325,7 +328,7 @@ public final class HostSession {
 
         for forward in plan.cancel {
             try? await conn.cancelForward(local: forward.local, remote: forward.remote)
-            guard gen == generation else { return }
+            guard gen == generation, linkAlive else { return }
             allocator.release(forward.local)
             active[forward.remote] = nil
             log.write("cancelled \(forward.remote) (laptop \(forward.local))", host: host)
@@ -340,7 +343,8 @@ public final class HostSession {
             }
             do {
                 try await conn.addForward(local: local, remote: want.remote)
-                guard gen == generation else {
+                // The link may have died while that call was in flight.
+                guard gen == generation, linkAlive else {
                     allocator.release(local)
                     return
                 }

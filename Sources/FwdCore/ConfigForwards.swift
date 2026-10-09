@@ -23,6 +23,18 @@ public enum ConfigForwards {
         return SSHConfig.parseForwards(sshG: result.stdout)
     }
 
+    /// ssh's complaint if it can't read the config at all, or nil if it can.
+    public static func configProblem(paths: Paths) async -> String? {
+        guard FileManager.default.fileExists(atPath: paths.sshConfig.path) else { return nil }
+        var args: [String] = []
+        if let config = paths.sshConfigOverride { args += ["-F", config.path] }
+        args += ["-G", "--", "fwd-config-check"]
+        let result = await Shell.run(SSHConnection.sshPath, args, timeout: 10)
+        guard !result.ok else { return nil }
+        let lines = result.stderr.split(whereSeparator: \.isNewline).map(String.init)
+        return lines.first ?? "ssh couldn't read the config"
+    }
+
     /// Who, if anyone, is listening on a laptop port.
     public static func localStatus(port: Int, fwdMasters: Set<Int32>) async -> ConfigForwardStatus {
         let result = await Shell.run(
