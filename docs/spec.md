@@ -75,6 +75,10 @@ Rules:
   below 1024 are fine, for example `80 -> 8080`.
 - Entering something already in the history turns it on rather than
   duplicating it.
+- An optional name follows the port: `3000 api`, `3000 -> 4000 web`. A name
+  is a trailing word that starts with a letter, up to 24 characters. Pills
+  show it in front of the port. Re-entering an entry with a name renames it;
+  without one, keeps the old name. Right-click → Rename… changes or clears it.
 
 ## Laptop port conflicts
 
@@ -152,6 +156,7 @@ hosts:
   devbox:
     - port: "3000"
       on: true
+      name: api
     - port: "3*** -> 4***"
       on: false
   homelab:
@@ -312,9 +317,24 @@ other order, fwd's entry is bumped to a nearby port as usual.
   config sit below in a compact list, and a filter field appears when there
   are more than eight hosts, so a config with hundreds of hosts stays usable.
 - Pill: click toggles on or off; hover reveals remove; a live pill has an
-  "open" control for `http://localhost:<laptop port>`. A wildcard pill expands
-  to show the ports it currently forwards.
+  "open" control for `http://localhost:<laptop port>`, or `vnc://` when the
+  remote port is 5900 to 5909, which opens the Screen Sharing app. A wildcard
+  pill expands to show the ports it currently forwards.
+- The menu bar panel shows everything the window does. Its height follows its
+  content: the host list is measured and the panel is exactly that tall, up to
+  the screen's height, and scrolls only past that. (A bare ScrollView in a
+  `MenuBarExtra` window has no height of its own and collapses.)
 - Per-host "Clear all" removes that host's history.
+- Screen Sharing: every host has a display button. One click adds (or turns
+  on) the entry `5900 -> 5901` named `vnc`, waits for the forward, and opens
+  `vnc://<ssh User>@localhost:<laptop port>` in macOS's built-in Screen
+  Sharing app with the user name filled in. Laptop 5901 because the laptop's
+  own Screen Sharing holds 5900; a second host bumps to 5902 as usual. An
+  existing entry for remote 5900 is reused, whatever its laptop port. If the
+  scan shows nothing listening on 5900 the button says to turn on Screen
+  Sharing on that machine instead of opening a dead connection. Auth or
+  connection problems surface as the host's usual errors; after 30 s without
+  a connection it says so and the forward keeps retrying.
 - Footer: "Turn all off", "Open window", "Open log", "Copy log location",
   "Launch at login" (a checkbox), "Install terminal command", "Check for
   updates", the version, and

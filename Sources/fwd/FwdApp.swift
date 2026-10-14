@@ -9,7 +9,7 @@ struct FwdApp: App {
     var body: some Scene {
         MenuBarExtra {
             PanelView(model: delegate.model, updater: delegate.updater, app: delegate, inWindow: false)
-                .frame(width: 380)
+                .frame(width: 440)
         } label: {
             MenuBarIcon(model: delegate.model, updater: delegate.updater)
         }
@@ -102,6 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot"), flag + 1 < CommandLine.arguments.count {
             snapshot(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]))
         }
+        if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-panel"), flag + 1 < CommandLine.arguments.count {
+            snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]))
+        }
     }
 
     /// Development aid: `--snapshot <file.png>` draws the window to an image
@@ -117,6 +120,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             view.cacheDisplay(in: view.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: file)
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// Like `--snapshot`, but draws the menu bar panel at the size it picks for itself.
+    private func snapshotPanel(to file: URL) {
+        let view = NSHostingView(rootView:
+            PanelView(model: model, updater: updater, app: self, inWindow: false)
+                .frame(width: 440)
+                .background(.windowBackground))
+        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 100),
+                         styleMask: [.borderless], backing: .buffered, defer: false)
+        w.contentView = view
+        w.orderFrontRegardless()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+            w.setContentSize(view.fittingSize)
+            view.layoutSubtreeIfNeeded()
+            if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: file)
+            }
             NSApp.terminate(nil)
         }
     }

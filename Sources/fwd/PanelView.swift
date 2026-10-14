@@ -9,6 +9,9 @@ struct PanelView: View {
 
     @State private var filter = ""
     @State private var actionError: String?
+    /// Natural height of the host list, measured so the menu bar panel can
+    /// be exactly as tall as what it shows.
+    @State private var listHeight: CGFloat = 0
 
     private var filtered: [HostCard] {
         let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
@@ -23,7 +26,6 @@ struct PanelView: View {
             Divider()
             FooterView(model: model, updater: updater, app: app, inWindow: inWindow, report: report)
         }
-        .frame(maxHeight: inWindow ? .infinity : 560)
         .background(inWindow ? AnyShapeStyle(.windowBackground) : AnyShapeStyle(.clear))
         .onAppear { app.surfaceAppeared() }
         .onDisappear { app.surfaceDisappeared() }
@@ -75,7 +77,7 @@ struct PanelView: View {
                         }
                         VStack(spacing: 0) {
                             ForEach(others) { card in
-                                CompactHostRow(card: card, model: model, report: report)
+                                CompactHostRow(card: card, model: model, app: app, report: report)
                                 if card.id != others.last?.id { Divider() }
                             }
                         }
@@ -86,14 +88,28 @@ struct PanelView: View {
                     }
                 }
                 .padding(12)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
             }
+            .scrollBounceBehavior(.basedOnSize)
+            // A ScrollView in a menu bar panel has no height of its own and
+            // collapses, so give it the list's height, up to what the screen allows.
+            .frame(height: inWindow ? nil : min(max(listHeight, 44), Self.panelListCap))
         }
     }
+
+    /// Room for the list under the menu bar, leaving space for banners and footer.
+    private static var panelListCap: CGFloat {
+        ((NSScreen.main?.visibleFrame.height ?? 800) - 160).clamped(to: 240...900)
+    }
+}
+
+extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self { min(max(self, range.lowerBound), range.upperBound) }
 }
 
 /// fwd's own errors read well as-is; system errors need their localized text.
 func message(for error: Error) -> String {
-    if error is PortPattern.ParseError || error is AppModelError { return "\(error)" }
+    if error is PortPattern.ParseError || error is AppModelError || error is ScreenSharingError { return "\(error)" }
     return error.localizedDescription
 }
 
@@ -197,7 +213,7 @@ struct EmptyStateView: View {
 struct PortField: View {
     let host: String
     let model: AppModel
-    var prompt = "Add a port: 3000, 31**, 3000 -> 4000"
+    var prompt = "Add a port: 3000, 31**, 3000 -> 4000, 8080 api"
 
     @State private var text = ""
     @State private var problem: String?
@@ -244,12 +260,14 @@ struct Shake: GeometryEffect {
 struct CompactHostRow: View {
     let card: HostCard
     let model: AppModel
+    let app: AppDelegate
     let report: (Error) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             Text(card.name).font(.callout).lineLimit(1).truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if card.inConfig { ScreenSharingButton(host: card.name, model: model, app: app, report: report) }
             PortField(host: card.name, model: model, prompt: "port")
                 .frame(width: 130)
         }

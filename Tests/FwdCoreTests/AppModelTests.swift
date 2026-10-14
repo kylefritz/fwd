@@ -19,6 +19,7 @@ import Testing
                              timing: Timing(retrySchedule: [0.05], steadyRetry: 0.1, scanInterval: 0.05, settle: 0.01),
                              makeConnection: { host in
                                  let c = FakeConnection()
+                                 c.listening = box.listening
                                  box.made[host, default: []].append(c)
                                  return c
                              },
@@ -27,7 +28,11 @@ import Testing
             self.box = box
         }
 
-        final class Box { var made: [String: [FakeConnection]] = [:] }
+        final class Box {
+            var made: [String: [FakeConnection]] = [:]
+            /// What new connections report from the remote scan.
+            var listening = "#fwd:ss\n"
+        }
         let box: Box
 
         func card(_ name: String) -> HostCard? { model.cards.first { $0.name == name } }

@@ -22,6 +22,7 @@ public struct PillPort: Identifiable, Equatable, Sendable {
     public let local: Int?
     public let state: PillState
     public var id: Int { remote }
+    public var openURL: URL? { local.map { ScreenSharing.url(remote: remote, local: $0) } }
 }
 
 /// One entry in a host's history, as the UI shows it.
@@ -36,7 +37,15 @@ public struct Pill: Identifiable, Equatable, Sendable {
     public let label: String
     public let moved: Bool
     public let ports: [PillPort]
+    /// The remote port of a single-port entry.
+    public let remote: Int?
+    public let name: String?
     public var id: String { text }
+    public var openURL: URL? {
+        guard let remote, let local else { return nil }
+        return ScreenSharing.url(remote: remote, local: local)
+    }
+    public var isScreenSharing: Bool { remote.map(ScreenSharing.vncPorts.contains) ?? false }
 }
 
 public struct ConfigPill: Identifiable, Equatable, Sendable {
@@ -251,15 +260,29 @@ public final class AppModel: ObservableObject {
 
     // MARK: Actions
 
+    /// Adds `text` (a port pattern, optionally followed by a name) and turns
+    /// it on. An entry that's already there is turned on, and renamed if a
+    /// name was given.
     public func add(host: String, text: String) async throws {
-        let pattern = try PortPattern.parse(text)
+        let (portText, name) = EntryName.split(text)
+        let pattern = try PortPattern.parse(portText)
         await syncFromDisk()
         var entries = file.hosts[host] ?? []
         if let index = entries.firstIndex(where: { $0.port == pattern.text }) {
             entries[index].on = true
+            if let name { entries[index].name = name }
         } else {
-            entries.append(Entry(port: pattern.text, on: true))
+            entries.append(Entry(port: pattern.text, on: true, name: name))
         }
+        try await update(host: host, entries: entries)
+    }
+
+    /// Sets or clears (with an empty string) an entry's name.
+    public func rename(host: String, text: String, to name: String) async throws {
+        await syncFromDisk()
+        var entries = file.hosts[host] ?? []
+        guard let index = entries.firstIndex(where: { $0.port == text }) else { return }
+        entries[index].name = EntryName.clean(name)
         try await update(host: host, entries: entries)
     }
 
@@ -289,11 +312,48 @@ public final class AppModel: ObservableObject {
         await syncFromDisk()
         guard fileError == nil else { throw AppModelError.portsFileBroken }
         for (host, entries) in file.hosts {
-            file.hosts[host] = entries.map { Entry(port: $0.port, on: false) }
+            file.hosts[host] = entries.map { Entry(port: $0.port, on: false, name: $0.name) }
             allocator.forget(keyPrefix: "\(host)|")
         }
         try save()
         await apply()
+    }
+
+    /// Makes sure the host's Screen Sharing port is forwarded, adding or
+    /// turning on its entry, and returns the `vnc://` URL once it's up.
+    public func screenSharingURL(host: String, timeout: Double = 30) async throws -> URL {
+        await syncFromDisk()
+        let existing = (file.hosts[host] ?? []).first {
+            guard let pattern = try? PortPattern.parse($0.port) else { return false }
+            return !pattern.isWildcard && pattern.remoteRange.lowerBound == ScreenSharing.remotePort
+        }
+        if let existing {
+            if !existing.on { try await toggle(host: host, text: existing.port) }
+        } else {
+            try await add(host: host, text: "\(ScreenSharing.entryText) \(ScreenSharing.entryName)")
+        }
+        let user = await ScreenSharing.user(host: host, paths: paths)
+        let remote = ScreenSharing.remotePort
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let session = sessions[host] {
+                if case .needsAttention(let message) = session.state {
+                    throw ScreenSharingError.hostProblem(message)
+                }
+                if let reason = session.blocked[remote] { throw ScreenSharingError.blocked(reason) }
+                // The scan runs before forwards are added, so by now it has
+                // answered whether anything listens on 5900.
+                if session.state == .connected, let forward = session.active[remote] {
+                    if let listening = session.listening, !listening.contains(remote) {
+                        throw ScreenSharingError.notSharing(host)
+                    }
+                    log.write("opening Screen Sharing on localhost:\(forward.local)", host: host)
+                    return ScreenSharing.url(local: forward.local, user: user)
+                }
+            }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+        throw ScreenSharingError.timedOut(host)
     }
 
     public func retry(host: String) async {
@@ -454,10 +514,11 @@ public final class AppModel: ObservableObject {
     }
 
     private func pill(for entry: Entry, host: String, session: HostSession?) -> Pill {
+        var remote: Int?
         func make(_ state: PillState, wildcard: Bool = false, local: Int? = nil, label: String? = nil,
                   moved: Bool = false, ports: [PillPort] = []) -> Pill {
             Pill(text: entry.port, on: entry.on, state: state, isWildcard: wildcard, local: local,
-                 label: label ?? entry.port, moved: moved, ports: ports)
+                 label: label ?? entry.port, moved: moved, ports: ports, remote: remote, name: entry.name)
         }
         let pattern: PortPattern
         do {
@@ -465,6 +526,7 @@ public final class AppModel: ObservableObject {
         } catch {
             return make(.invalid("\(error)"))
         }
+        remote = pattern.isWildcard ? nil : pattern.remoteRange.lowerBound
         guard entry.on else { return make(.off, wildcard: pattern.isWildcard) }
         guard let session, session.state == .connected else {
             return make(.pending, wildcard: pattern.isWildcard)
@@ -495,15 +557,15 @@ public final class AppModel: ObservableObject {
             return make(state, wildcard: true, ports: ports)
         }
 
-        let remote = pattern.remoteRange.lowerBound
-        if let reason = session.blocked[remote] { return make(.blocked(reason)) }
-        guard let forward = session.active[remote], forward.entry == pattern.text else {
+        let remotePort = pattern.remoteRange.lowerBound
+        if let reason = session.blocked[remotePort] { return make(.blocked(reason)) }
+        guard let forward = session.active[remotePort], forward.entry == pattern.text else {
             return make(.pending)
         }
-        let wanted = pattern.laptopPort(for: remote)
+        let wanted = pattern.laptopPort(for: remotePort)
         let moved = forward.local != wanted
-        let label = (forward.local == remote) ? "\(remote)" : "\(remote) → \(forward.local)"
-        return make(portState(remote: remote, local: forward.local, host: host, session: session),
+        let label = (forward.local == remotePort) ? "\(remotePort)" : "\(remotePort) → \(forward.local)"
+        return make(portState(remote: remotePort, local: forward.local, host: host, session: session),
                     local: forward.local, label: label, moved: moved)
     }
 }

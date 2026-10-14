@@ -5,10 +5,13 @@ import Yams
 public struct Entry: Codable, Equatable, Sendable {
     public var port: String
     public var on: Bool
+    /// A short alias shown on the pill, such as `api` or `vnc`.
+    public var name: String?
 
-    public init(port: String, on: Bool = true) {
+    public init(port: String, on: Bool = true, name: String? = nil) {
         self.port = port
         self.on = on
+        self.name = name
     }
 
     public init(from decoder: Decoder) throws {
@@ -20,6 +23,31 @@ public struct Entry: Codable, Equatable, Sendable {
             port = try c.decode(String.self, forKey: .port)
         }
         on = try c.decodeIfPresent(Bool.self, forKey: .on) ?? true
+        name = EntryName.clean(try c.decodeIfPresent(String.self, forKey: .name) ?? "")
+    }
+}
+
+/// Aliases: typed after the port (`3000 api`, `3000 -> 4000 web`) or set
+/// later with Rename.
+public enum EntryName {
+    public static let maxLength = 24
+
+    /// Splits `3000 -> 4000 web` into the port text and the name. A name is
+    /// a trailing word that starts with a letter, so `3000 -> 4000` alone
+    /// has none.
+    public static func split(_ text: String) -> (port: String, name: String?) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard let space = trimmed.lastIndex(where: \.isWhitespace) else { return (trimmed, nil) }
+        let word = String(trimmed[trimmed.index(after: space)...])
+        guard word.first?.isLetter == true else { return (trimmed, nil) }
+        return (String(trimmed[..<space]).trimmingCharacters(in: .whitespaces), clean(word))
+    }
+
+    /// A tidy name, or nil for an empty one.
+    public static func clean(_ name: String) -> String? {
+        let oneLine = name.split(whereSeparator: \.isNewline).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return oneLine.isEmpty ? nil : String(oneLine.prefix(maxLength))
     }
 }
 

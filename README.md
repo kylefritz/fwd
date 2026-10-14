@@ -72,12 +72,25 @@ type a port and press Return.
 | `31**` | every listening remote port from 3100 to 3199, same number locally |
 | `3*** -> 4***` | every listening remote port from 3000 to 3999, shifted to 4000 to 4999 |
 
+Add a name after the port to label it: `3000 api`, `3000 -> 4000 web`.
+Right-click a pill → **Rename…** to change it later.
+
 `*` stands for one digit and goes at the end. The left side is always the
 remote port. Local ports below 1024 aren't allowed (`80 -> 8080` is fine).
 
 Each entry becomes a pill. Click it to turn it off or on; hover for the
 remove button; the arrow icon opens it in your browser. Entries stay in the
 host's history until you remove them or **Clear all**.
+
+### Screen Sharing
+
+Click the display icon next to a host to see its screen. fwd forwards the
+remote's port 5900 to `localhost:5901` (5902 for the next host, and so on)
+and opens it in macOS's built-in Screen Sharing app, with your ssh user name
+filled in. It travels over the same ssh connection, so whatever already gets
+you there (ProxyCommand, Cloudflare Access, a jump host) works unchanged.
+The remote needs Screen Sharing turned on (System Settings → General →
+Sharing), or any VNC server on port 5900.
 
 What the pill's symbol means:
 

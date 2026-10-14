@@ -91,6 +91,7 @@ struct HostCardView: View {
                 Text("not in ssh config").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            if card.inConfig { ScreenSharingButton(host: card.name, model: model, app: app, report: report) }
             if !card.pills.isEmpty {
                 Button("Clear all") {
                     Task { do { try await model.clearAll(host: card.name) } catch { report(error) } }
@@ -120,6 +121,38 @@ struct HostCardView: View {
             FlowLayout(spacing: 6) {
                 ForEach(card.configPills) { ConfigPillView(pill: $0) }
             }
+        }
+    }
+}
+
+/// One click: forward the host's port 5900 and open it in Screen Sharing.
+struct ScreenSharingButton: View {
+    let host: String
+    let model: AppModel
+    let app: AppDelegate
+    let report: (Error) -> Void
+
+    @State private var opening = false
+
+    var body: some View {
+        Button(action: open) {
+            if opening {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: "display")
+            }
+        }
+        .buttonStyle(.plain).foregroundStyle(.secondary)
+        .disabled(opening)
+        .help(Text(verbatim: "Screen Sharing: forward \(host)'s port 5900 and open it"))
+        .accessibilityLabel(Text(verbatim: "Share the screen of \(host)"))
+    }
+
+    private func open() {
+        opening = true
+        Task {
+            defer { opening = false }
+            do { app.open(try await model.screenSharingURL(host: host)) } catch { report(error) }
         }
     }
 }
@@ -155,6 +188,8 @@ struct PillView: View {
     let report: (Error) -> Void
 
     @State private var hovering = false
+    @State private var renaming = false
+    @State private var draftName = ""
 
     private var isUp: Bool { pill.state == .live || pill.state == .active }
 
@@ -165,8 +200,12 @@ struct PillView: View {
                 Button(action: toggle) {
                     HStack(spacing: 5) {
                         Image(systemName: style.symbol).foregroundStyle(style.color).font(.caption)
-                        Text(verbatim: pill.label.replacingOccurrences(of: "->", with: "→")).font(.callout.monospacedDigit())
-                            .foregroundStyle(pill.on ? .primary : .secondary)
+                        if let name = pill.name {
+                            Text(verbatim: name).font(.callout.weight(.semibold))
+                                .foregroundStyle(pill.on ? .primary : .secondary)
+                        }
+                        Text(verbatim: pill.label.replacingOccurrences(of: "->", with: "→")).font(pill.name == nil ? .callout.monospacedDigit() : .caption.monospacedDigit())
+                            .foregroundStyle(pill.on && pill.name == nil ? .primary : .secondary)
                         if pill.moved {
                             Image(systemName: "arrow.turn.down.right").font(.caption2).foregroundStyle(.orange)
                                 .accessibilityLabel("moved to a nearby port")
@@ -180,14 +219,16 @@ struct PillView: View {
                 }
                 .buttonStyle(.plain)
                 .help(help(style))
-                .accessibilityLabel("\(pill.label), \(style.words)")
+                .accessibilityLabel("\(pill.name.map { "\($0), " } ?? "")\(pill.label), \(style.words)")
                 .accessibilityHint(pill.on ? "Turns this forward off" : "Turns this forward on")
 
-                if let local = pill.local, pill.on, pill.state != .pending {
-                    Button { openLocal(local) } label: { Image(systemName: "arrow.up.right.square") }
-                        .buttonStyle(.plain).foregroundStyle(isUp ? .blue : .secondary)
-                        .help(Text(verbatim: "Open http://localhost:\(local)"))
-                        .accessibilityLabel(Text(verbatim: "Open localhost \(local) in the browser"))
+                if let url = pill.openURL, pill.on, pill.state != .pending {
+                    Button { app.open(url) } label: {
+                        Image(systemName: pill.isScreenSharing ? "display" : "arrow.up.right.square")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(isUp ? .blue : .secondary)
+                    .help(Text(verbatim: "Open \(url.absoluteString)"))
+                    .accessibilityLabel(Text(verbatim: "Open \(url.absoluteString)"))
                 }
                 if hovering {
                     Button(action: remove) { Image(systemName: "xmark.circle.fill") }
@@ -200,8 +241,8 @@ struct PillView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(pill.ports) { port in
                         let portStyle = StateStyle.pill(port.state)
-                        if let local = port.local {
-                            Button { openLocal(local) } label: {
+                        if let local = port.local, let url = port.openURL {
+                            Button { app.open(url) } label: {
                                 HStack(spacing: 4) {
                                     Image(systemName: portStyle.symbol).foregroundStyle(portStyle.color).font(.caption2)
                                     Text(verbatim: port.remote == local ? "\(port.remote)" : "\(port.remote) → \(local)")
@@ -210,7 +251,7 @@ struct PillView: View {
                                 }
                             }
                             .buttonStyle(.plain)
-                            .help(Text(verbatim: "Open http://localhost:\(local)"))
+                            .help(Text(verbatim: "Open \(url.absoluteString)"))
                             .accessibilityLabel(Text(verbatim: "Port \(port.remote) on laptop \(local), \(portStyle.words)"))
                         } else {
                             HStack(spacing: 4) {
@@ -232,8 +273,21 @@ struct PillView: View {
                 .inset(by: 0.5)
                 .stroke(pill.on ? style.color.opacity(0.35) : Color.secondary.opacity(0.25), lineWidth: 1))
         .onHover { hovering = $0 }
+        .popover(isPresented: $renaming, arrowEdge: .bottom) {
+            HStack {
+                TextField("Name, like api or vnc", text: $draftName)
+                    .textFieldStyle(.roundedBorder).frame(width: 180)
+                    .onSubmit(saveName)
+                Button("Save", action: saveName).keyboardShortcut(.defaultAction)
+            }
+            .padding(10)
+        }
         .contextMenu {
             Button(pill.on ? "Turn off" : "Turn on", action: toggle)
+            Button("Rename…") {
+                draftName = pill.name ?? ""
+                renaming = true
+            }
             if let local = pill.local { Button("Copy localhost:" + String(local)) { app.copy("localhost:\(local)") } }
             Button("Remove", action: remove)
         }
@@ -260,11 +314,12 @@ struct PillView: View {
         Task { do { try await model.toggle(host: host, text: pill.text) } catch { report(error) } }
     }
 
-    private func remove() {
-        Task { do { try await model.remove(host: host, text: pill.text) } catch { report(error) } }
+    private func saveName() {
+        renaming = false
+        Task { do { try await model.rename(host: host, text: pill.text, to: draftName) } catch { report(error) } }
     }
 
-    private func openLocal(_ port: Int) {
-        if let url = URL(string: "http://localhost:\(port)") { app.open(url) }
+    private func remove() {
+        Task { do { try await model.remove(host: host, text: pill.text) } catch { report(error) } }
     }
 }
