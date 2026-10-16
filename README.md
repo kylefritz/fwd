@@ -19,7 +19,7 @@ Type `3000`, get `localhost:3000` from your dev box. No flags, no terminal tab t
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
-  <img src="docs/screenshot-light.png" width="440" alt="The fwd panel: devbox forwarding web, api and a 42** range; gpu-box forwarding Jupyter; staging waiting for an ssh session">
+  <img src="docs/screenshot-light.png" width="640" alt="fwd open from its menu bar icon: devbox forwarding web, api and a 42** range; gpu-box forwarding Jupyter; staging waiting for an ssh session">
 </picture>
 
 </div>

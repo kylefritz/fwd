@@ -141,6 +141,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-panel"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]))
         }
+        if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-hero"), flag + 1 < CommandLine.arguments.count {
+            snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]),
+                          AnyView(HeroSnapshot(panel: PanelView(model: model, updater: updater, app: self, inWindow: false))))
+        }
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-report"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]),
                           AnyView(ReportView(kind: .bug, app: self, model: model) {}.frame(width: 560)))
