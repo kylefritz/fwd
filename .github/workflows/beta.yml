@@ -52,7 +52,7 @@ jobs:
           fi
           gh release create "v$VERSION" build/fwd.zip --prerelease --target "$SHA" \
             --title "fwd $VERSION" \
-            --notes "Beta built from ${SHA:0:7}. Set \`update_channel: beta\` in ~/.config/fwd/config.yaml to follow these."
+            --notes "$(printf 'Beta built from %s. Set `update_channel: beta` in ~/.config/fwd/config.yaml to follow these.\n\n' "${SHA:0:7}"; cat .github/release-notes.md)"
       - name: Keep only the newest ten betas
         env:
           GH_TOKEN: ${{ github.token }}

@@ -61,22 +61,18 @@ Update with `brew upgrade fwd`; the app tells you when there's a new version.
 
 **Download**
 
-Grab `fwd.zip` from the [latest release](https://github.com/kylefritz/fwd/releases/latest)
-and drag `fwd.app` into `/Applications`. A downloaded copy updates itself:
-it fetches new versions in the background and offers **Restart to update**.
-
-<details>
-<summary>macOS says it can't open fwd</summary>
-
-fwd isn't notarized by Apple, so macOS blocks a downloaded copy the first
-time. Either open it once and click **Open Anyway** in **System Settings →
-Privacy & Security**, or run:
+Grab `fwd.zip` from the [latest release](https://github.com/kylefritz/fwd/releases/latest),
+unzip it, drag `fwd.app` into `/Applications`, then run:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/fwd.app
 ```
 
-</details>
+fwd isn't notarized by Apple, so without that line macOS says it *"could not
+verify fwd is free of malware"* the first time you open it. (Clicking **Open
+Anyway** in **System Settings → Privacy & Security** works too.) After that, a
+downloaded copy updates itself: it fetches new versions in the background
+and offers **Restart to update**.
 
 <details>
 <summary>Build from source</summary>
