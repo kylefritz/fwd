@@ -64,7 +64,7 @@ public enum ScreenSharingError: Error, CustomStringConvertible, Equatable {
             return "Nothing is listening on port 5900 on \(host). Turn on Screen Sharing there "
                 + "(System Settings → General → Sharing) and try again."
         case .blocked(let reason): return "Couldn't forward Screen Sharing: \(reason)"
-        case .timedOut(let host): return "Couldn't reach \(host) yet. fwd will keep trying; click again once it connects."
+        case .timedOut(let host): return "Couldn't reach \(host). Check the log, then try again."
         }
     }
 }

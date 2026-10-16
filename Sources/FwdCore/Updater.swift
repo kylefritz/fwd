@@ -244,11 +244,10 @@ public final class Updater: ObservableObject {
             return manual("the release has no \(Self.assetName)")
         }
         do {
-            // One staging folder per running app, replaced each time, so
-            // repeated checks don't accumulate downloads.
-            let work = stagingDir
+            // A folder per version, so a ready update stays installable while
+            // a newer one downloads. The older folder goes once this one is in.
+            let work = stagingDir.appendingPathComponent(version.description)
             try? FileManager.default.removeItem(at: work)
-            staged = nil
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             let (downloaded, response) = try await session.download(from: asset.browser_download_url)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
@@ -270,12 +269,16 @@ public final class Updater: ObservableObject {
             guard await verifySignature(candidate) else {
                 return manual("the download failed its signature check")
             }
+            if let previous = staged, previous.path.hasPrefix(stagingDir.path) {
+                try? FileManager.default.removeItem(at: previous.deletingLastPathComponent().deletingLastPathComponent())
+            }
             staged = candidate
             log.write("update \(version) downloaded and verified")
             state = .ready(version: version.description, notes: release.html_url)
         } catch {
             log.write("update download failed: \(error.localizedDescription)")
-            if case .ready = fallback { state = .idle } else { state = (fallback == .checking) ? .idle : fallback }
+            // A ready update is untouched, so keep offering it.
+            state = (fallback == .checking) ? .idle : fallback
         }
     }
 

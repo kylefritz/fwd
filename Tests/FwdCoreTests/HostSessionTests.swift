@@ -250,6 +250,24 @@ import Testing
         try await eventually("connects after retry") { s.state == .connected }
     }
 
+    @Test func sleepAndNetworkChangesDoNotClearNeedsAttention() async throws {
+        let factory = Factory()
+        factory.configure = { $0.startError = .needsAttention("sign in") }
+        let power = FakePower()
+        let s = session(factory, power: power)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("needs attention") { s.state == .needsAttention("sign in") }
+        await s.handle(.willSleep)
+        await s.handle(.didWake)
+        power.networkUp = false
+        await s.handle(.networkDown)
+        power.networkUp = true
+        await s.handle(.networkUp)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(s.state == .needsAttention("sign in"))
+        #expect(factory.made.count == 1, "no new attempt, so no new sign-in tab")
+    }
+
     @Test func reconnectsAndRestoresForwardsWhenTheLinkDies() async throws {
         let factory = Factory()
         let s = session(factory)

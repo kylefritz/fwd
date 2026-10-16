@@ -225,6 +225,26 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(Updater.homebrewCurrentBundle(for: brew)?.path == "/opt/homebrew/opt/fwd/fwd.app")
     }
 
+    @Test func aReadyUpdateStaysInstallableWhileANewerOneFails() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "1.0.0", marker: "old")
+        let next = try makeBundle(in: work.appendingPathComponent("build"), version: "1.1.0", marker: "new")
+        server.route("/latest", body: releaseJSON(tag: "v1.1.0", server: server))
+        server.route("/fwd.zip", body: try await zip(next))
+        let u = updater(server, installed: installed, version: "1.0.0")
+        await u.check()
+        #expect(u.state == .ready(version: "1.1.0", notes: URL(string: "https://example.com/notes")))
+
+        // 1.2.0 comes out, but its download fails.
+        server.route("/latest", body: releaseJSON(tag: "v1.2.0", server: server))
+        server.route("/fwd.zip", status: 500, body: Data())
+        await u.check()
+        #expect(u.state == .ready(version: "1.1.0", notes: URL(string: "https://example.com/notes")))
+        _ = try u.install()
+        #expect(Updater.bundleVersion(installed) == "1.1.0")
+    }
+
     @Test func newerReleaseIsDownloadedVerifiedAndSwappedIn() async throws {
         let server = try TestHTTPServer()
         defer { server.stop() }

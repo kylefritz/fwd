@@ -185,12 +185,15 @@ public final class HostSession {
             asleep = true
             // A click connects once; sleeping ends it.
             clicked = false
+            // Waiting for a person stays that way, or waking would retry.
+            if case .needsAttention = state { return }
             guard !patterns.isEmpty, running || state != .standby else { return }
             log.write("sleeping; pausing", host: host)
             await halt()
             set(.paused("asleep"))
         case .networkDown:
             guard wantsConnection, !asleep else { return }
+            if case .needsAttention = state { return }
             clicked = false
             log.write("network lost; pausing", host: host)
             await halt()

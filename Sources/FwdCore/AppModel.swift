@@ -129,6 +129,7 @@ public final class AppModel: ObservableObject {
 
     private var portsStamp: Date?
     private var sshConfigStamp: [Date?] = []
+    private var sshConfigWatched: [URL] = []
     private var visible = false
     private var ticks = 0
     private var timer: Timer?
@@ -256,8 +257,12 @@ public final class AppModel: ObservableObject {
         portsStamp = store.portsModified()
     }
 
+    /// Modification dates of the config, its Includes and their folders (a
+    /// new file matching an Include glob changes its folder). Only stats the
+    /// paths found at the last reload; parsing the Include tree every second
+    /// would be wasteful.
     private func sshConfigStamps() -> [Date?] {
-        SSHConfig.files(configPath: paths.sshConfig).map {
+        sshConfigWatched.map {
             (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date
         }
     }
@@ -267,6 +272,8 @@ public final class AppModel: ObservableObject {
     }
 
     private func reloadSSHConfig() {
+        let files = SSHConfig.files(configPath: paths.sshConfig)
+        sshConfigWatched = [paths.sshConfig] + files + Set(files.map { $0.deletingLastPathComponent() }).sorted { $0.path < $1.path }
         sshConfigStamp = sshConfigStamps()
         sshConfigMissing = !FileManager.default.fileExists(atPath: paths.sshConfig.path)
         let hosts = SSHConfig.hosts(configPath: paths.sshConfig)
@@ -384,21 +391,27 @@ public final class AppModel: ObservableObject {
     /// turning on its entry, and returns the `vnc://` URL once it's up.
     public func screenSharingURL(host: String, timeout: Double = 30) async throws -> URL {
         await syncFromDisk()
-        func vncEntry() -> Entry? {
-            (file.hosts[host] ?? []).first {
-                guard let pattern = try? PortPattern.parse($0.port) else { return false }
-                return !pattern.isWildcard && pattern.remoteRange.lowerBound == ScreenSharing.remotePort
-            }
-        }
         // Only a forward this click turns on is turned off again afterwards;
         // one you had on already is yours.
-        let turningOn = vncEntry()?.on != true
-        if let existing = vncEntry() {
+        let turningOn = screenSharingEntry(host)?.on != true
+        if let existing = screenSharingEntry(host) {
             if !existing.on { try await toggle(host: host, text: existing.port) }
         } else {
             try await add(host: host, text: "\(ScreenSharing.entryText) \(ScreenSharing.entryName)")
         }
         await sessions[host]?.connect()
+        do {
+            return try await waitForScreenSharing(host: host, timeout: timeout, track: turningOn)
+        } catch {
+            // Nothing to look at: put back what the click turned on.
+            if turningOn, let entry = screenSharingEntry(host), entry.on, !entry.keep {
+                try? await toggle(host: host, text: entry.port)
+            }
+            throw error
+        }
+    }
+
+    private func waitForScreenSharing(host: String, timeout: Double, track: Bool) async throws -> URL {
         let user = await ScreenSharing.user(host: host, paths: paths)
         let remote = ScreenSharing.remotePort
         let deadline = Date().addingTimeInterval(timeout)
@@ -415,7 +428,7 @@ public final class AppModel: ObservableObject {
                         throw ScreenSharingError.notSharing(host)
                     }
                     log.write("opening Screen Sharing on localhost:\(forward.local)", host: host)
-                    if turningOn, let entry = vncEntry(), !entry.keep {
+                    if track, let entry = screenSharingEntry(host), !entry.keep {
                         screenSharing[host] = ScreenSharingUse(port: entry.port, started: Date())
                     }
                     return ScreenSharing.url(local: forward.local, user: user)
@@ -424,6 +437,14 @@ public final class AppModel: ObservableObject {
             try await Task.sleep(nanoseconds: 200_000_000)
         }
         throw ScreenSharingError.timedOut(host)
+    }
+
+    /// The host's single-port entry for remote 5900, if it has one.
+    private func screenSharingEntry(_ host: String) -> Entry? {
+        (file.hosts[host] ?? []).first {
+            guard let pattern = try? PortPattern.parse($0.port) else { return false }
+            return !pattern.isWildcard && pattern.remoteRange.lowerBound == ScreenSharing.remotePort
+        }
     }
 
     /// The Retry and Connect buttons.
@@ -668,8 +689,9 @@ public final class AppModel: ObservableObject {
 
         let remotePort = pattern.remoteRange.lowerBound
         if let reason = session.blocked[remotePort] { return make(.blocked(reason)) }
-        guard let forward = session.active[remotePort], forward.entry == pattern.text else {
-            return make(.pending)
+        guard let forward = session.active[remotePort] else { return make(.pending) }
+        guard forward.entry == pattern.text else {
+            return make(.blocked("Remote \(remotePort) is already forwarded by \(forward.entry)"))
         }
         let wanted = pattern.laptopPort(for: remotePort)
         let moved = forward.local != wanted

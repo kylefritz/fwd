@@ -37,7 +37,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     private let paths: Paths
     private let log: Log
     private let connectTimeout: Int
-    private let socketPath: String
+    let socketPath: String
 
     private let lock = NSLock()
     private var process: Process?
@@ -50,8 +50,27 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         self.paths = paths
         self.log = log
         self.connectTimeout = connectTimeout
-        let name = Paths.shortHash(host + "\u{0}" + paths.configDir.path)
+        // One socket per connection, not per host: a stale connection being
+        // stopped must never remove or close the one that replaced it.
+        let name = Paths.shortHash(host + "\u{0}" + paths.configDir.path) + "-" + UUID().uuidString.prefix(6)
         self.socketPath = paths.socketDir.appendingPathComponent(name).path
+    }
+
+    /// Creates the socket folder, or checks an existing one: it must be a
+    /// real folder (not a symlink) owned by you, and nobody else may write
+    /// to it, or another account could swap a socket under fwd.
+    static func prepareSocketDir(_ dir: URL) throws {
+        let path = dir.path
+        if mkdir(path, 0o700) != 0, errno != EEXIST {
+            throw ConnectionError.failed("Couldn't create \(path): \(String(cString: strerror(errno)))")
+        }
+        var info = stat()
+        guard lstat(path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid() else {
+            throw ConnectionError.needsAttention("\(path) isn't a folder you own, so fwd won't put its sockets there")
+        }
+        if info.st_mode & 0o077 != 0, chmod(path, 0o700) != 0 {
+            throw ConnectionError.failed("Couldn't make \(path) private")
+        }
     }
 
     public var masterPID: Int32? {
@@ -115,16 +134,9 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     }
 
     public func start() async throws {
-        try? FileManager.default.createDirectory(
-            at: paths.socketDir, withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700])
+        try Self.prepareSocketDir(paths.socketDir)
         guard socketPath.utf8.count < 100 else {
             throw ConnectionError.failed("Control socket path is too long: \(socketPath)")
-        }
-        // A master left over from a crashed run would make ours fail to bind.
-        if FileManager.default.fileExists(atPath: socketPath) {
-            _ = await control(["-O", "exit"], timeout: 5)
-            try? FileManager.default.removeItem(atPath: socketPath)
         }
 
         let process = Process()

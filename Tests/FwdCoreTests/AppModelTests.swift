@@ -193,6 +193,29 @@ import Testing
         await rig.model.shutdown()
     }
 
+    @Test func aFailedScreenSharingClickLeavesNothingOn() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)  // nothing listens on 5900
+        await #expect(throws: ScreenSharingError.notSharing("devbox")) {
+            _ = try await rig.model.screenSharingURL(host: "devbox", timeout: 5)
+        }
+        #expect(rig.pill("devbox", "5900 -> 5901")?.on == false)
+        await rig.model.shutdown()
+    }
+
+    @Test func aSecondEntryForTheSameRemotePortSaysWhy() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        try await rig.model.add(host: "devbox", text: "3000")
+        try await rig.model.add(host: "devbox", text: "3000 -> 4000 web")
+        try await eventually("first is up") { rig.pill("devbox", "3000")?.local == 3000 }
+        try await eventually("second explains") {
+            if case .blocked(let why) = rig.pill("devbox", "3000 -> 4000")?.state { return why.contains("3000") }
+            return false
+        }
+        await rig.model.shutdown()
+    }
+
     @Test func screenSharingNobodyOpenedTurnsOffToo() async throws {
         let rig = try Rig()
         rig.box.listening = "#fwd:ss\nLISTEN 0 1 127.0.0.1:5900 0.0.0.0:*\n"

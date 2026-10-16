@@ -46,6 +46,9 @@ public struct PortPattern: Equatable, Hashable, Sendable {
     }
 
     private struct Side {
+        /// Where the range starts before port 0 is left out, for the offset:
+        /// `0*** -> 1***` must add 1000, not 999.
+        let base: Int
         let low: Int
         let high: Int
         let stars: Int
@@ -72,7 +75,7 @@ public struct PortPattern: Equatable, Hashable, Sendable {
         guard low <= highestPort, high >= 1 else { throw ParseError.outOfRange(s) }
         // Drop leading zeros so "03000" and "3000" are the same entry.
         let text = String(prefix) + String(repeating: "*", count: stars)
-        return Side(low: max(low, 1), high: high, stars: stars, text: text)
+        return Side(base: low, low: max(low, 1), high: high, stars: stars, text: text)
     }
 
     public static func parse(_ raw: String) throws -> PortPattern {
@@ -92,7 +95,7 @@ public struct PortPattern: Equatable, Hashable, Sendable {
         let text = remote.text == laptop.text ? remote.text : "\(remote.text) -> \(laptop.text)"
         return PortPattern(
             remoteRange: remote.low...remote.high,
-            offset: laptop.low - remote.low,
+            offset: laptop.base - remote.base,
             text: text
         )
     }

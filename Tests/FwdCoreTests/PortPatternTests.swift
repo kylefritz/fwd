@@ -78,4 +78,11 @@ import Testing
         #expect(throws: PortPattern.ParseError.laptopPortTooLow(899)) { try PortPattern.parse("8**") }
         #expect(throws: PortPattern.ParseError.tooManyArrows) { try PortPattern.parse("1 -> 2 -> 3") }
     }
+
+    @Test func aZeroPrefixWildcardKeepsItsOffset() throws {
+        let p = try PortPattern.parse("0*** -> 1***")
+        #expect(p.laptopPort(for: 80) == 1080)
+        #expect(p.laptopPort(for: 443) == 1443)
+        #expect(p.remoteRange.lowerBound == 1, "port 0 itself is never forwarded")
+    }
 }

@@ -33,11 +33,15 @@ public struct Entry: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         // Accept `port: 3000` as well as `port: "3000"`.
+        let raw: String
         if let number = try? c.decode(Int.self, forKey: .port) {
-            port = String(number)
+            raw = String(number)
         } else {
-            port = try c.decode(String.self, forKey: .port)
+            raw = try c.decode(String.self, forKey: .port)
         }
+        // In the app's own spelling (`3000->4000` is `3000 -> 4000`), since
+        // that is what matching, history and saved laptop ports go by.
+        port = (try? PortPattern.parse(raw).text) ?? raw
         on = try c.decodeIfPresent(Bool.self, forKey: .on) ?? true
         name = EntryName.clean(try c.decodeIfPresent(String.self, forKey: .name) ?? "")
         keep = try c.decodeIfPresent(Bool.self, forKey: .keep) ?? false

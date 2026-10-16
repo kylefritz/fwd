@@ -99,4 +99,9 @@ func tempPaths() -> Paths {
         let size = try FileManager.default.attributesOfItem(atPath: paths.logFile.path)[.size] as! Int
         #expect(size < 400)
     }
+
+    @Test func handWrittenPortsAreReadInTheAppsSpelling() throws {
+        let file = try Store.decodePorts("hosts:\n  devbox:\n  - port: 3000->4000\n  - port: \"03001\"\n  - port: banana\n")
+        #expect(file.hosts["devbox"]?.map(\.port) == ["3000 -> 4000", "3001", "banana"])
+    }
 }
