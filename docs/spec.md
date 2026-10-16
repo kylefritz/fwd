@@ -373,10 +373,10 @@ other order, fwd's entry is bumped to a nearby port as usual.
   Sharing on that machine instead of opening a dead connection. Auth or
   connection problems surface as the host's usual errors; after 30 s without
   a connection it says so and the forward keeps retrying.
-- Footer: "Turn all off", "Open window", "Open ssh config", "Open log", "Copy log location",
+- Footer: "Turn all off", the version, and a ••• menu: "Open ssh config",
+  "Open log", "Copy log location", "Report a bug…", "Request a feature…",
   "Launch at login" (a checkbox), "Install terminal command", "Check for
-  updates", the version, and
-  "Quit".
+  updates", then "Pop out into a window" (panel only) and "Quit fwd".
 - First run with no usable hosts shows a short explanation, an "Open ssh
   config" button, an "Add an example host" button and a link to the README
   instead of an empty panel. The example is a commented `Host devbox` block

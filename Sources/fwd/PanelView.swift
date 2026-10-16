@@ -317,7 +317,6 @@ struct FooterView: View {
                     .help(AppDelegate.commit.map { "Built from commit \($0)" } ?? "")
 
                 Menu {
-                    if !inWindow { Button("Open window") { app.showWindow() } }
                     Button("Open ssh config") { app.openSSHConfig() }
                     Button("Open log") { app.openLog() }
                     Button("Copy log location") {
@@ -348,6 +347,10 @@ struct FooterView: View {
                     }
                     .disabled(updater.state == .checking)
                     Divider()
+                    if !inWindow {
+                        Button("Pop out into a window") { app.showWindow() }
+                            .help("The same panel in a window you can resize and keep open")
+                    }
                     Button("Quit fwd") { NSApp.terminate(nil) }
                 } label: {
                     Image(systemName: "ellipsis.circle")
