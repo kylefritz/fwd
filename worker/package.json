@@ -1,5 +1,5 @@
 {
-  "name": "fwd-update-server",
+  "name": "fwd-stats",
   "private": true,
   "type": "module",
   "scripts": {

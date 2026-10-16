@@ -2,7 +2,7 @@
   // Counts fwd installs from the ping each update check sends.
   // See README.md in this folder.
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "fwd-update-server",
+  "name": "fwd-stats",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-16",
   "routes": [{ "pattern": "fwd.kylefritz.co", "custom_domain": true }],
