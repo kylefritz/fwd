@@ -99,11 +99,11 @@ struct HostCardView: View {
                     .help("Connect now. fwd won't reconnect by itself if the link drops, unless you're ssh'd into \(card.name) or a port is set to Keep connected.")
             }
             if !card.pills.isEmpty {
-                Button("Clear all") {
+                Button("Remove All Ports") {
                     Task { do { try await model.clearAll(host: card.name) } catch { report(error) } }
                 }
                 .buttonStyle(.link).font(.caption)
-                .help("Remove this host's port history")
+                .help("Remove every port from \(card.name), on or off. Nothing on the remote changes.")
             }
         }
     }

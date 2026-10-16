@@ -33,7 +33,7 @@ In scope:
 
 - Hosts read from `~/.ssh/config`, following `Include`.
 - Local forwards only (remote port made reachable on the laptop).
-- Per-host port entries with history, on/off toggle, remove, clear all.
+- Per-host port entries with history, on/off toggle, remove, remove all.
 - Wildcard entries that follow whatever is listening in a range.
 - Optional laptop-side port with `->`.
 - Automatic nearby port when the laptop port is taken.
@@ -362,7 +362,8 @@ other order, fwd's entry is bumped to a nearby port as usual.
   content: the host list is measured and the panel is exactly that tall, up to
   the screen's height, and scrolls only past that. (A bare ScrollView in a
   `MenuBarExtra` window has no height of its own and collapses.)
-- Per-host "Clear all" removes that host's history.
+- Per-host "Remove All Ports" removes every entry for that host, on or off,
+  and the laptop ports fwd remembered for them. Nothing on the remote changes.
 - Screen Sharing: every host has a display button. One click adds (or turns
   on) the entry `5900 -> 5901` named `vnc`, waits for the forward, and opens
   `vnc://<ssh User>@localhost:<laptop port>` in macOS's built-in Screen
