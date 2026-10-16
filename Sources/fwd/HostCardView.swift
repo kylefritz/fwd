@@ -193,7 +193,11 @@ struct PillView: View {
     let app: AppDelegate
     let report: (Error) -> Void
 
-    @State private var hovering = false
+    @State private var overPill = false
+    @State private var overRemove = false
+    /// The remove badge stays while the mouse is on the pill or on the badge,
+    /// which sticks out past the pill's edge.
+    private var hovering: Bool { overPill || overRemove }
     @State private var renaming = false
     @State private var draftName = ""
 
@@ -241,12 +245,6 @@ struct PillView: View {
                     .help(Text(verbatim: "Open \(url.absoluteString)"))
                     .accessibilityLabel(Text(verbatim: "Open \(url.absoluteString)"))
                 }
-                if hovering {
-                    Button(action: remove) { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .help("Remove from history")
-                        .accessibilityLabel("Remove \(pill.text)")
-                }
             }
             if pill.isWildcard, pill.on, !pill.ports.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
@@ -283,7 +281,24 @@ struct PillView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .inset(by: 0.5)
                 .stroke(pill.on ? style.color.opacity(0.35) : Color.secondary.opacity(0.25), lineWidth: 1))
-        .onHover { hovering = $0 }
+        .onHover { overPill = $0 }
+        // On top of the pill's corner rather than in its row, so showing it
+        // doesn't widen the pill and push the next one along.
+        .overlay(alignment: .topTrailing) {
+            if hovering {
+                Button(action: remove) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .background(Circle().fill(.background).padding(1))
+                }
+                .buttonStyle(.plain)
+                .help("Remove")
+                .accessibilityLabel("Remove \(pill.text)")
+                .offset(x: 6, y: -6)
+                .onHover { overRemove = $0 }
+            }
+        }
         .popover(isPresented: $renaming, arrowEdge: .bottom) {
             HStack {
                 TextField("Name, like api or vnc", text: $draftName)
