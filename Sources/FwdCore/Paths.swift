@@ -28,6 +28,8 @@ public struct Paths: Sendable {
     public var portsFile: URL { configDir.appendingPathComponent("ports.yaml") }
     public var stateFile: URL { configDir.appendingPathComponent("state.yaml") }
     public var preferencesFile: URL { configDir.appendingPathComponent("config.yaml") }
+    /// Where the running app answers the `fwd` command line.
+    public var controlSocket: URL { socketDir.appendingPathComponent("control.sock") }
 
     public init(configDir: URL, logFile: URL, sshConfigOverride: URL?, socketDir: URL, releasesURL: URL,
                 releasesListURL: URL? = nil) {

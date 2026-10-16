@@ -82,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var reportWindow: NSWindow?
     private var visibleSurfaces = 0
     private var updateTimer: Timer?
+    private var controlServer: ControlServer?
     private var isDuplicate = false
 
     static var version: String {
@@ -122,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         power.start()
         Task {
             await model.start()
+            startControlServer()
             if model.store.loadPreferences().checkForUpdates {
                 await updater.check()
             }
@@ -202,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// connection gets a couple of seconds at most.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if !isDuplicate {
+            controlServer?.stop()
             SSHConnection.closeAllBlocking(paths: paths)
             model.log.write("fwd stopped")
             model.log.flush()
@@ -345,6 +348,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } catch {
             model.log.write("couldn't open a terminal: \(error.localizedDescription)")
             return false
+        }
+    }
+
+    /// Lets the `fwd` command line drive the app. Without it the app still
+    /// works; only the command can't reach it.
+    private func startControlServer() {
+        let handler = ControlHandler(model: model, open: { NSWorkspace.shared.open($0) })
+        let server = ControlServer(path: paths.controlSocket.path) { await handler.handle($0) }
+        do {
+            try SSHConnection.prepareSocketDir(paths.socketDir)
+            try server.start()
+            controlServer = server
+        } catch {
+            model.log.write("the command line is unavailable: \(error)")
         }
     }
 

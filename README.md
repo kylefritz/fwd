@@ -128,9 +128,50 @@ viewer, fwd turns the forward off again. The remote needs Screen Sharing on
 
 ### From the terminal
 
-`fwd` opens the window, starting the app if needed, and `fwd --version`
-prints the version. Homebrew installs the command; otherwise use **Install
-Terminal Command** in the ••• menu.
+The `fwd` command does what the panel does, so you, scripts and coding
+agents can forward ports without clicking:
+
+```sh
+fwd devbox 3000           # forward devbox:3000, print http://localhost:3000
+fwd 3000                  # the same, when devbox is the one connected host
+fwd 3000 5173 web --keep  # several ports, with a name, kept connected
+fwd wait 3000             # block until a server answers on devbox:3000
+fwd status                # hosts and ports with their live state
+fwd off 3000              # turn it off; fwd remove 3000 forgets it
+fwd                       # open the window
+```
+
+#### Tell your agent about fwd
+
+Coding agents won't know fwd exists unless you tell them. Paste this into
+your agent's instructions (`~/.claude/CLAUDE.md`, a project's `AGENTS.md`),
+or run `fwd agents` to print it:
+
+```markdown
+## fwd: reaching servers on remote hosts
+
+fwd forwards ports from ssh hosts to this Mac. Use it when something you
+run here (a browser, curl, tests) needs a server on a remote host.
+
+- `fwd <host> <port> --wait --json` forwards the port and waits until a
+  server answers. The local URL is in `host.ports[0].url`; it can be a
+  different local port than the remote one.
+- `fwd status --json` lists hosts, their state and forwarded ports with
+  URLs. Check it instead of guessing ports.
+- `fwd <host> <port> --json` forwards without waiting (state `waiting`
+  means nothing listens on the remote yet); `fwd wait <host> <port>`
+  waits later.
+- `fwd off <host> <port>` turns a forward off when you're done.
+- The host can be left out when exactly one host is connected.
+- Exit codes: 0 done, 1 couldn't (read `error`), 2 bad usage, 3 the fwd
+  app isn't reachable, 4 timed out.
+- Don't add `--keep` unless asked: it keeps the host connected after
+  the session that started it ends.
+- `fwd --help` lists everything.
+```
+
+The command starts fwd if it isn't running. Homebrew installs it; otherwise
+choose **Install Terminal Command** in the ••• menu.
 
 ## When fwd connects
 

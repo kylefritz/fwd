@@ -59,7 +59,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     /// Creates the socket folder, or checks an existing one: it must be a
     /// real folder (not a symlink) owned by you, and nobody else may write
     /// to it, or another account could swap a socket under fwd.
-    static func prepareSocketDir(_ dir: URL) throws {
+    public static func prepareSocketDir(_ dir: URL) throws {
         let path = dir.path
         if mkdir(path, 0o700) != 0, errno != EEXIST {
             throw ConnectionError.failed("Couldn't create \(path): \(String(cString: strerror(errno)))")

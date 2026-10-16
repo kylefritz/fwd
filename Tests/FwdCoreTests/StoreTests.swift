@@ -21,6 +21,16 @@ func tempPaths() -> Paths {
         #expect(text.contains("3*** -> 4***"))
     }
 
+    @Test func singlePortsAreWrittenWithoutQuotes() throws {
+        let store = Store(paths: tempPaths())
+        let file = PortsFile(hosts: ["vdesk": [Entry(port: "8765", name: "lanes"), Entry(port: "5900 -> 5901"), Entry(port: "31**")]])
+        try store.savePorts(file)
+        let text = try String(contentsOf: store.paths.portsFile, encoding: .utf8)
+        #expect(text.contains("port: 8765\n"), "\(text)")
+        #expect(!text.contains("'"), "no quotes anywhere: \(text)")
+        #expect(try store.loadPorts() == file)
+    }
+
     @Test func keepConnectedIsSavedOnlyWhenSet() throws {
         let store = Store(paths: tempPaths())
         let file = PortsFile(hosts: ["vdesk": [Entry(port: "8765", keep: true), Entry(port: "8080")]])

@@ -9,12 +9,16 @@ VERSION="${VERSION:-dev}"
 # fails inside Homebrew's own build sandbox.
 BINARY=".build/release/fwd"
 [ -x "$BINARY" ] || { echo "No release binary; run 'swift build -c release' first." >&2; exit 1; }
+CLI=".build/release/fwd-cli"
+[ -x "$CLI" ] || { echo "No release fwd-cli; run 'swift build -c release' first." >&2; exit 1; }
 
 APP="build/fwd.app"
 rm -rf "$APP" build/fwd.zip
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin"
 cp "$BINARY" "$APP/Contents/MacOS/fwd"
-cp scripts/fwd "$APP/Contents/Resources/bin/fwd"
+# The terminal command (Sources/fwd-cli), at the path the ~/.local/bin link
+# and the Homebrew formula point to.
+cp "$CLI" "$APP/Contents/Resources/bin/fwd"
 chmod 755 "$APP/Contents/Resources/bin/fwd"
 
 # The icon is drawn by the app itself (Sources/fwd/Icon.swift).

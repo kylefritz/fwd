@@ -21,6 +21,7 @@ import Testing
                              makeConnection: { host in
                                  let c = FakeConnection()
                                  c.listening = box.listening
+                                 c.startError = box.startError
                                  box.made[host, default: []].append(c)
                                  return c
                              },
@@ -35,6 +36,8 @@ import Testing
             var made: [String: [FakeConnection]] = [:]
             /// What new connections report from the remote scan.
             var listening = "#fwd:ss\n"
+            /// What new connections fail with, if anything.
+            var startError: ConnectionError?
             /// Hosts you have your own ssh session to.
             var sessions: Set<String> = []
             /// Laptop ports with a connection open through them.
