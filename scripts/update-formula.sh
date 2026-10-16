@@ -1,6 +1,8 @@
 #!/bin/sh
 # Points the Homebrew formula at a released version and pushes it to the tap.
-# Usage: TAP_TOKEN=... scripts/update-formula.sh 1.2.3
+# Usage: TAP_DEPLOY_KEY="$(cat key)" scripts/update-formula.sh 1.2.3
+# TAP_DEPLOY_KEY is the private half of a write-enabled deploy key on the
+# tap repository, so it can change that repository and nothing else.
 set -eu
 
 VERSION="$1"
@@ -16,7 +18,10 @@ curl -fsSL -o "$WORK/source.tar.gz" "$URL" || { echo "Couldn't fetch $URL" >&2; 
 [ -s "$WORK/source.tar.gz" ] || { echo "Empty download from $URL" >&2; exit 1; }
 SHA=$(shasum -a 256 "$WORK/source.tar.gz" | cut -d' ' -f1)
 
-git clone --quiet "https://x-access-token:${TAP_TOKEN}@github.com/$TAP.git" "$WORK/tap"
+( umask 077; printf '%s\n' "$TAP_DEPLOY_KEY" > "$WORK/key" )
+export GIT_SSH_COMMAND="ssh -i $WORK/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+trap 'rm -f "$WORK/key"' EXIT
+git clone --quiet "git@github.com:$TAP.git" "$WORK/tap"
 mkdir -p "$WORK/tap/Formula"
 sed -e "s|^  url .*|  url \"$URL\"|" -e "s|^  sha256 .*|  sha256 \"$SHA\"|" \
   Formula/fwd.rb > "$WORK/tap/Formula/fwd.rb"

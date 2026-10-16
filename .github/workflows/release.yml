@@ -13,8 +13,9 @@ jobs:
     runs-on: macos-26
     env:
       # Job level, so the tap step's `if` can see it; a step's own env
-      # isn't available to its `if`.
-      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+      # isn't available to its `if`. A deploy key that can only write to
+      # the tap repository.
+      TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Version from tag
@@ -32,5 +33,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" build/fwd.zip --title "fwd $VERSION" --generate-notes
       - name: Update the Homebrew tap
-        if: ${{ env.TAP_TOKEN != '' }}
+        if: ${{ env.TAP_DEPLOY_KEY != '' }}
         run: scripts/update-formula.sh "$VERSION"
