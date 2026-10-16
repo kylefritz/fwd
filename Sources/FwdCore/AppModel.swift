@@ -589,7 +589,7 @@ public final class AppModel: ObservableObject {
         var built = names.map { name -> HostCard in
             let session = sessions[name]
             let state = session?.state ?? .idle
-            let pills = (file.hosts[name] ?? []).map { pill(for: $0, host: name, session: session) }
+            let pills = Self.displayOrder(file.hosts[name] ?? []).map { pill(for: $0, host: name, session: session) }
             let configPills = (configForwards[name] ?? []).map {
                 ConfigPill(forward: $0, status: configStatus[name]?[$0] ?? .unknown)
             }
@@ -615,6 +615,17 @@ public final class AppModel: ObservableObject {
             newOverall = .idle
         }
         if newOverall != overall { overall = newOverall }
+    }
+
+    /// How a card lists its ports: on before off, each by remote port (a range
+    /// by where it starts), then anything that doesn't parse. ports.yaml keeps
+    /// its own order.
+    static func displayOrder(_ entries: [Entry]) -> [Entry] {
+        func key(_ entry: Entry) -> (Int, Int, String) {
+            guard let pattern = try? PortPattern.parse(entry.port) else { return (2, 0, entry.port) }
+            return (entry.on ? 0 : 1, pattern.remoteRange.lowerBound, entry.port)
+        }
+        return entries.sorted { key($0) < key($1) }
     }
 
     private func rank(_ card: HostCard) -> Int {

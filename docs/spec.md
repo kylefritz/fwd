@@ -358,6 +358,9 @@ other order, fwd's entry is bumped to a nearby port as usual.
   "open" control for `http://localhost:<laptop port>`, or `vnc://` when the
   remote port is 5900 to 5909, which opens the Screen Sharing app. A wildcard
   pill expands to show the ports it currently forwards.
+- Pills are listed on before off, each by remote port (a range by where it
+  starts), then entries that don't parse. Only the display is sorted;
+  `ports.yaml` keeps the order it has.
 - The menu bar panel shows everything the window does. Its height follows its
   content: the host list is measured and the panel is exactly that tall, up to
   the screen's height, and scrolls only past that. (A bare ScrollView in a

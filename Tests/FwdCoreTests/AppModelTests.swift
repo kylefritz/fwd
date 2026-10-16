@@ -229,6 +229,28 @@ import Testing
         await rig.model.shutdown()
     }
 
+    @Test func portsShowOnFirstThenByNumber() async throws {
+        let rig = try Rig()
+        try FileManager.default.createDirectory(at: rig.model.paths.configDir, withIntermediateDirectories: true)
+        try """
+            hosts:
+              devbox:
+              - port: '9229'
+                on: false
+              - port: 8000 -> 18000
+              - port: banana
+              - port: 42**
+              - port: '5173'
+              - port: '3000'
+                on: false
+            """.write(to: rig.model.paths.portsFile, atomically: true, encoding: .utf8)
+        await rig.model.start(runTimer: false)
+        try await eventually("cards built") { rig.card("devbox")?.pills.count == 6 }
+        #expect(rig.card("devbox")?.pills.map(\.text) == ["42**", "5173", "8000 -> 18000", "3000", "9229", "banana"])
+        #expect(rig.portsText.hasPrefix("hosts:\n  devbox:\n  - port: '9229'"), "only the display is sorted")
+        await rig.model.shutdown()
+    }
+
     @Test func handEditsApplyOnTheNextTick() async throws {
         let rig = try Rig()
         await rig.model.start(runTimer: false)
