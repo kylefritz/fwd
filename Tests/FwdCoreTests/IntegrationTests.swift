@@ -276,4 +276,40 @@ import Testing
         let sockets = (try? FileManager.default.contentsOfDirectory(atPath: server.paths.socketDir.path)) ?? []
         #expect(sockets.isEmpty)
     }
+
+    @Test func theCommandLineForwardsAndWaitsThroughTheApp() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let laptop = try freePort()
+        let model = AppModel(paths: server.paths, power: FakePower(),
+                             timing: Timing(retrySchedule: [0.3], steadyRetry: 0.5, scanInterval: 0.3, settle: 0.05),
+                             userSessions: { [] })
+        await model.start(runTimer: false)
+        let handler = ControlHandler(model: model, open: { _ in })
+        try SSHConnection.prepareSocketDir(server.paths.socketDir)
+        let control = ControlServer(path: server.paths.controlSocket.path) { await handler.handle($0) }
+        try control.start()
+        defer { control.stop() }
+
+        // The agent forwards first, then the server starts on the remote.
+        let remotePort = try freePort()
+        let mapping = "\(remotePort) -> \(laptop)"
+        let socket = server.paths.controlSocket.path
+        let forward = await Task.detached {
+            CLIRunner.send(ControlRequest(cmd: "forward", args: [SSHTestServer.goodHost, mapping], timeout: 15),
+                           socket: socket, launch: {})
+        }.value
+        #expect(forward.ok, "\(forward)")
+        #expect(forward.host?.ports.first?.state == "waiting")
+        #expect(forward.host?.ports.first?.url == "http://localhost:\(laptop)")
+
+        let remote = try TestListener(port: remotePort, greeting: "from the agent's server")
+        defer { remote.stop() }
+        let waited = await Task.detached {
+            CLIRunner.send(ControlRequest(cmd: "wait", args: [mapping], timeout: 15), socket: socket, launch: {})
+        }.value
+        #expect(waited.ok, "the one connected host is used: \(waited)")
+        #expect(fetch(laptop) == "from the agent's server")
+        await model.shutdown()
+    }
 }
