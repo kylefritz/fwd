@@ -35,3 +35,18 @@ jobs:
           head -1 out.txt
           test "$(head -1 out.txt)" = "#fwd:ss"
           grep -E '^LISTEN .*:38123 ' out.txt
+
+  stats-server:
+    name: Stats server (Worker)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run check
+      - run: npm test

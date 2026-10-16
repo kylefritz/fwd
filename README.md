@@ -164,7 +164,7 @@ Everything lives in plain files, so it's easy to keep in your dotfiles.
 | File | What it is |
 |---|---|
 | `~/.config/fwd/ports.yaml` | Your entries. Edit by hand if you like; changes apply within a second. |
-| `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `update_channel: beta` follows every build of `main`. |
+| `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `send_usage_stats: false` keeps them but stops the install count, `update_channel: beta` follows every build of `main`. |
 | `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken. Safe to delete. |
 | `~/Library/Logs/fwd/fwd.log` | The log. **Copy log location** in the ••• menu copies its path. |
 
@@ -218,8 +218,11 @@ the original port again.
 <details>
 <summary><b>Anything else</b></summary>
 
-`tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing. Include the
-relevant lines when you [open an issue](https://github.com/kylefritz/fwd/issues).
+Choose **Report a bug…** in the ••• menu. Pick how much of the log to
+include, check the preview, and fwd opens a prefilled GitHub issue. Sign-in
+tokens, IP addresses and your home folder are always removed, and host
+names can be. `tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing
+as it happens.
 
 </details>
 
@@ -232,8 +235,12 @@ connection lists the remote's listening ports, and fwd reconciles the
 forwards against it every few seconds.
 
 **Privacy.** fwd talks to your hosts over ssh and asks GitHub whether there's
-a new release (you can turn that off). Nothing else leaves your Mac. Updates
-come over HTTPS from this repository and are checked for the right bundle,
+a new release. With each of those update checks it also sends a small ping
+to `fwd.kylefritz.co` so I can count installs: a random install ID, the
+version, the update channel, how fwd was installed and the macOS version,
+plus your IP address as the request arrives. Nothing else leaves your Mac.
+`send_usage_stats: false` stops the ping; `check_for_updates: false` stops
+both. The ping is write-only: updates never depend on it. They come over HTTPS from this repository and are checked for the right bundle,
 version and code signature before they're offered; they aren't signed with an
 Apple Developer ID.
 

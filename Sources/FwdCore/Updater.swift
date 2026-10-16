@@ -104,6 +104,16 @@ public final class Updater: ObservableObject {
     private let verifySignature: (URL) async -> Bool
     /// Read at every check, so editing config.yaml takes effect without a restart.
     private let channel: () -> UpdateChannel
+    /// Downloads are only taken from URLs that start with this: this
+    /// repository's releases.
+    private let trustedDownloads: String
+    /// Where each check sends a ping that counts installs (see worker/). It
+    /// only ever receives; nothing about updates depends on its answer.
+    private let statsServer: URL?
+    private let installID: String?
+    /// Read at every check, like the channel.
+    private let sendStats: () -> Bool
+    private let osVersion: String
     private var staged: URL?
     private let stagingDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("fwd-update-\(UUID().uuidString.prefix(8))")
@@ -113,7 +123,16 @@ public final class Updater: ObservableObject {
     public init(releasesURL: URL, releasesListURL: URL? = nil, bundleURL: URL, currentVersion: String, log: Log,
                 kind: InstallKind? = nil, session: URLSession = .shared,
                 verifySignature: ((URL) async -> Bool)? = nil,
+                trustedDownloads: String = "https://github.com/\(Paths.repository)/releases/download/",
+                statsServer: URL? = nil, installID: String? = nil,
+                osVersion: String = Updater.systemVersion,
+                sendStats: @escaping () -> Bool = { true },
                 channel: @escaping () -> UpdateChannel = { .stable }) {
+        self.trustedDownloads = trustedDownloads
+        self.statsServer = statsServer
+        self.installID = installID
+        self.osVersion = osVersion
+        self.sendStats = sendStats
         self.releasesURL = releasesURL
         self.releasesListURL = releasesListURL
         self.channel = channel
@@ -161,10 +180,12 @@ public final class Updater: ObservableObject {
         let before = state
         // Keep a waiting "Restart to update" on screen while re-checking.
         if case .ready = before {} else { state = .checking }
+        // Homebrew only ships tagged releases, so a beta there could never
+        // be installed; only a self-updating copy follows the beta channel.
+        let beta = kind == .release && channel() == .beta && releasesListURL != nil
+        // Separate from the check, so it can never hold it up or change it.
+        Task { await self.ping(beta: beta) }
         do {
-            // Homebrew only ships tagged releases, so a beta there could never
-            // be installed; only a self-updating copy follows the beta channel.
-            let beta = kind == .release && channel() == .beta && releasesListURL != nil
             let (release, latest) = try await newestRelease(beta: beta)
             log.write("update check\(beta ? " (beta)" : ""): latest is \(latest), running \(currentVersion)")
 
@@ -202,15 +223,44 @@ public final class Updater: ObservableObject {
         }
     }
 
-    /// The latest release, or on beta the newest published one of any kind.
-    private func newestRelease(beta: Bool) async throws -> (Release, Version) {
+    public nonisolated static var systemVersion: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+    }
+
+    /// Counts this install: version, channel, kind and macOS version, under
+    /// a random install ID. Failures are ignored.
+    private func ping(beta: Bool) async {
+        guard let statsServer, sendStats() else { return }
+        var request = URLRequest(url: statsServer.appendingPathComponent("v1/ping"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 8
+        for (name, value) in [("X-Fwd-Install", installID ?? ""), ("X-Fwd-Version", currentVersion),
+                              ("X-Fwd-Channel", beta ? "beta" : "stable"), ("X-Fwd-Kind", "\(kind)"),
+                              ("X-Fwd-OS", osVersion)] {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        _ = try? await get(request, expecting: 204)
+    }
+
+    private func fetchReleases(beta: Bool) async throws -> Data {
         var request = URLRequest(url: beta ? releasesListURL! : releasesURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 20
+        return try await get(request)
+    }
+
+    private func get(_ request: URLRequest, expecting status: Int = 200) async throws -> Data {
+        var request = request
+        request.setValue("fwd/\(currentVersion)", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw URLError(.badServerResponse)
-        }
+        guard (response as? HTTPURLResponse)?.statusCode == status else { throw URLError(.badServerResponse) }
+        return data
+    }
+
+    /// The latest release, or on beta the newest published one of any kind.
+    private func newestRelease(beta: Bool) async throws -> (Release, Version) {
+        let data = try await fetchReleases(beta: beta)
         let candidates = beta
             ? try JSONDecoder().decode([Release].self, from: data).filter { $0.draft != true }
             : [try JSONDecoder().decode(Release.self, from: data)]
@@ -242,6 +292,9 @@ public final class Updater: ObservableObject {
         }
         guard let asset = release.assets?.first(where: { $0.name == Self.assetName }) else {
             return manual("the release has no \(Self.assetName)")
+        }
+        guard asset.browser_download_url.absoluteString.hasPrefix(trustedDownloads) else {
+            return manual("the download isn't from \(trustedDownloads)")
         }
         do {
             // A folder per version, so a ready update stays installable while

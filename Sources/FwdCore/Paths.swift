@@ -12,6 +12,11 @@ public struct Paths: Sendable {
     public var releasesURL: URL
     /// Recent releases including prereleases, for the beta channel.
     public var releasesListURL: URL
+    /// Where update checks send a ping that counts installs (see worker/).
+    /// Nil sends none. Update information always comes from GitHub.
+    public var statsServer: URL?
+
+    public static let defaultStatsServer = URL(string: "https://fwd.kylefritz.co")!
 
     public static let repository = "kylefritz/fwd"
     public static let bundleIdentifier = "io.github.kylefritz.fwd"
@@ -35,9 +40,9 @@ public struct Paths: Sendable {
             ?? URL(string: "https://api.github.com/repos/\(Paths.repository)/releases?per_page=30")!
     }
 
-    /// Defaults, with `FWD_HOME`, `FWD_SSH_CONFIG`, `FWD_RELEASES_URL` and
-    /// `FWD_RELEASES_LIST_URL` honored so a test or a curious user can
-    /// sandbox the app.
+    /// Defaults, with `FWD_HOME`, `FWD_SSH_CONFIG`, `FWD_RELEASES_URL`,
+    /// `FWD_RELEASES_LIST_URL` and `FWD_STATS_SERVER` honored so a test or a
+    /// curious user can sandbox the app.
     public static func fromEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment) -> Paths {
         let home = FileManager.default.homeDirectoryForCurrentUser
         var configDir = home.appendingPathComponent(".config/fwd")
@@ -53,8 +58,15 @@ public struct Paths: Sendable {
         let releases = env["FWD_RELEASES_URL"].flatMap(URL.init(string:))
             ?? URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
         let list = env["FWD_RELEASES_LIST_URL"].flatMap(URL.init(string:))
-        return Paths(configDir: configDir, logFile: logFile, sshConfigOverride: sshConfig,
-                     socketDir: socketDir, releasesURL: releases, releasesListURL: list)
+        var paths = Paths(configDir: configDir, logFile: logFile, sshConfigOverride: sshConfig,
+                          socketDir: socketDir, releasesURL: releases, releasesListURL: list)
+        // An empty FWD_STATS_SERVER sends no pings.
+        if let server = env["FWD_STATS_SERVER"] {
+            paths.statsServer = server.isEmpty ? nil : URL(string: server)
+        } else {
+            paths.statsServer = defaultStatsServer
+        }
+        return paths
     }
 
     /// Short stable hash (FNV-1a), for socket file names.

@@ -74,9 +74,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     lazy var updater = Updater(
         releasesURL: paths.releasesURL, releasesListURL: paths.releasesListURL, bundleURL: Bundle.main.bundleURL,
         currentVersion: AppDelegate.version, log: model.log,
+        statsServer: paths.statsServer, installID: model.store.installID(),
+        sendStats: { [store = model.store] in store.loadPreferences().sendUsageStats },
         channel: { [store = model.store] in store.loadPreferences().updateChannel })
 
     private var window: NSWindow?
+    private var reportWindow: NSWindow?
     private var visibleSurfaces = 0
     private var updateTimer: Timer?
     private var isDuplicate = false
@@ -120,6 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-panel"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]))
         }
+        if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-report"), flag + 1 < CommandLine.arguments.count {
+            snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]),
+                          AnyView(ReportView(kind: .bug, app: self, model: model) {}.frame(width: 560)))
+        }
     }
 
     /// Development aid: `--snapshot <file.png>` draws the window to an image
@@ -141,10 +148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Like `--snapshot`, but draws the menu bar panel at the size it picks for itself.
     /// `--light` draws it in light mode whatever the system uses.
-    private func snapshotPanel(to file: URL) {
+    private func snapshotPanel(to file: URL, _ content: AnyView? = nil) {
         let view = NSHostingView(rootView:
-            PanelView(model: model, updater: updater, app: self, inWindow: false)
-                .frame(width: 440)
+            (content ?? AnyView(PanelView(model: model, updater: updater, app: self, inWindow: false)
+                .frame(width: 440)))
                 .background(.windowBackground))
         if CommandLine.arguments.contains("--light") { view.appearance = NSAppearance(named: .aqua) }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 100),
@@ -289,6 +296,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model.log.write("couldn't open a terminal: \(error.localizedDescription)")
             return false
         }
+    }
+
+    /// Opens the window for reporting a bug or requesting a feature.
+    func showReport(_ kind: IssueReport.Kind) {
+        reportWindow?.close()
+        let view = ReportView(kind: kind, app: self, model: model) { [weak self] in self?.reportWindow?.close() }
+        let w = NSWindow(contentViewController: NSHostingController(rootView: view))
+        w.title = "Report to fwd on GitHub"
+        w.styleMask = [.titled, .closable, .resizable]
+        w.isReleasedWhenClosed = false
+        w.center()
+        reportWindow = w
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
+    }
+
+    /// A log too long for the issue link: saved to a file shown in Finder,
+    /// and copied, so it can be dragged or pasted into the issue.
+    func handOver(log: String) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-report")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current,
+                                                formatOptions: [.withFullDate, .withTime])
+        let file = dir.appendingPathComponent("fwd-log-\(stamp).txt")
+        do {
+            try log.write(to: file, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        } catch {
+            model.log.write("couldn't save the log for the report: \(error.localizedDescription)")
+        }
+        copy(log)
     }
 
     func copyLogLocation() {

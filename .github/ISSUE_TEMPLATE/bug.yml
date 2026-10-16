@@ -1,0 +1,31 @@
+name: Bug report
+description: Something in fwd doesn't work the way it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what fwd did instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: fwd version
+      description: Shown at the bottom of the panel.
+      placeholder: "0.1.0"
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "26.1"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: >
+        From ~/Library/Logs/fwd/fwd.log. **Report a bug…** in fwd's ••• menu fills
+        this in with tokens, IP addresses and (optionally) host names removed.
+        Issues are public, so check it before submitting.
+      render: text

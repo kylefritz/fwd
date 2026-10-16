@@ -323,6 +323,8 @@ struct FooterView: View {
                         app.copyLogLocation()
                         note = "Copied \(model.paths.logFile.path)"
                     }
+                    Button("Report a bug…") { app.showReport(.bug) }
+                    Button("Request a feature…") { app.showReport(.feature) }
                     Divider()
                     Toggle("Launch at login", isOn: Binding(
                         get: { launchAtLogin },

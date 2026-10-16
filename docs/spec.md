@@ -174,8 +174,10 @@ hosts:
   separately in `~/.config/fwd/state.yaml`, so `ports.yaml` stays portable
   between machines. Deleting `state.yaml` is harmless.
 - `~/.config/fwd/config.yaml` holds preferences: `check_for_updates`
-  (default `true`) and `update_channel` (`stable` or `beta`, default
-  `stable`). A missing file means defaults.
+  (default `true`), `send_usage_stats` (default `true`) and `update_channel`
+  (`stable` or `beta`, default `stable`). A missing file means defaults.
+- `state.yaml` also holds `install_id`, a random UUID made on first launch
+  for counting installs. It isn't derived from the machine or the user.
 
 ### ssh invocation
 
@@ -415,9 +417,12 @@ thing to paste into a bug report.
 
 ## Privacy
 
-fwd makes exactly two kinds of network connection: the user's own ssh
-sessions, and the update check to GitHub (which can be turned off). It
-collects and sends nothing else. The log stays on the machine.
+fwd makes three kinds of network connection: the user's own ssh sessions,
+the update check to GitHub, and with each update check a ping to the stats
+server that counts installs (see Updates). `send_usage_stats: false` stops
+the ping alone; `check_for_updates: false` stops both. It sends nothing
+else. The log stays on the machine unless the user puts it in an issue
+(see Reporting).
 
 ## Distribution
 
@@ -475,6 +480,21 @@ collects and sends nothing else. The log stays on the machine.
 - A build from source reports version `dev` and never self-updates; it only
   mentions that a release exists.
 
+### Counting installs
+
+- Each update check also sends `POST https://fwd.kylefritz.co/v1/ping`, in
+  its own task, with `X-Fwd-Install` (the random `install_id`),
+  `X-Fwd-Version`, `X-Fwd-Channel`, `X-Fwd-Kind` (`release`, `homebrew`,
+  `source`) and `X-Fwd-OS`. Its answer and failures are ignored.
+- The Worker in `worker/` adds the IP address and country and writes a row
+  to the `fwd_pings` Analytics Engine dataset. Release information and
+  downloads always come from GitHub directly, so the stats server can't
+  affect updates; on top of that, the updater only downloads from
+  `github.com/kylefritz/fwd/releases/download/`.
+- `make stats` prints GitHub's download counts per release (which include
+  self-updates) and, with Cloudflare credentials, installs per day and per
+  version from the dataset.
+
 ### Beta channel
 
 - Every commit on `main` that passes CI is published by `beta.yml` as a
@@ -496,6 +516,24 @@ collects and sends nothing else. The log stays on the machine.
 Trust: an update is trusted because it came over HTTPS from the project's
 repository, nothing stronger. The README says so. Updates downloaded by the
 app are not quarantined and launch normally.
+
+## Reporting
+
+- **Report a bug…** and **Request a feature…** in the ••• menu open a window
+  with the kind, a title, how much log to include (none, 15 minutes, 1 hour,
+  24 hours, 7 days; a bug defaults to the last hour, a feature request to
+  none), "Replace host names" (on by default), and a preview of exactly the
+  text that will be shared.
+- Always removed: URL query strings (sign-in tokens live there), `key=value`
+  secrets and `Bearer` credentials, IPv4 addresses, and the home folder
+  (shown as `~`). With "Replace host names", ssh host aliases become
+  `host1`, `host2`, … numbered by first appearance, other domain names
+  become `[hostname]`, and the user name becomes `user`.
+- **Continue on GitHub** opens the `bug.yml` or `feature.yml` issue form
+  with the title, version, macOS version and log filled in. A log that would
+  push the link past 7,500 characters is instead saved to a file shown in
+  Finder and copied, and the log field says to drag or paste it in. Nothing
+  is posted until the user submits the form.
 
 ## Launch at login
 

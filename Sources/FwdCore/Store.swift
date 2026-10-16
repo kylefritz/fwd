@@ -90,10 +90,14 @@ public struct Preferences: Codable, Equatable, Sendable {
     public var checkForUpdates: Bool = true
     /// `beta` follows every build of main; anything else is stable.
     public var updateChannel: UpdateChannel = .stable
+    /// The install-counting ping that goes with each update check. Turning
+    /// it off leaves update checks alone.
+    public var sendUsageStats: Bool = true
 
     enum CodingKeys: String, CodingKey {
         case checkForUpdates = "check_for_updates"
         case updateChannel = "update_channel"
+        case sendUsageStats = "send_usage_stats"
     }
 
     public init() {}
@@ -103,17 +107,22 @@ public struct Preferences: Codable, Equatable, Sendable {
         // A typo shouldn't throw away the other settings.
         let channel = try? c.decodeIfPresent(String.self, forKey: .updateChannel)
         updateChannel = channel.flatMap { UpdateChannel(rawValue: $0.lowercased()) } ?? .stable
+        sendUsageStats = (try? c.decodeIfPresent(Bool.self, forKey: .sendUsageStats)) ?? true
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(checkForUpdates, forKey: .checkForUpdates)
         try c.encode(updateChannel.rawValue, forKey: .updateChannel)
+        try c.encode(sendUsageStats, forKey: .sendUsageStats)
     }
 }
 
 private struct StateFile: Codable {
     var assigned: [String: Int] = [:]
+    /// A random ID for this install, sent with update checks to count
+    /// installs. Not derived from anything about the machine or the user.
+    var install_id: String?
 }
 
 /// Reads and writes the YAML files under `~/.config/fwd`.
@@ -159,20 +168,38 @@ public final class Store {
 
     // MARK: state.yaml (app-owned)
 
-    public func loadSticky() -> [String: Int] {
+    private func loadState() -> StateFile {
         guard let text = try? String(contentsOf: paths.stateFile, encoding: .utf8),
-              let state = try? YAMLDecoder().decode(StateFile.self, from: text) else { return [:] }
-        return state.assigned
+              let state = try? YAMLDecoder().decode(StateFile.self, from: text) else { return StateFile() }
+        return state
     }
 
-    public func saveSticky(_ assigned: [String: Int]) {
+    private func saveState(_ state: StateFile) {
         var options = YAMLEncoder.Options()
         options.sortKeys = true
         let encoder = YAMLEncoder()
         encoder.options = options
-        if let text = try? encoder.encode(StateFile(assigned: assigned)) {
+        if let text = try? encoder.encode(state) {
             try? write(text, to: paths.stateFile)
         }
+    }
+
+    public func loadSticky() -> [String: Int] { loadState().assigned }
+
+    public func saveSticky(_ assigned: [String: Int]) {
+        var state = loadState()
+        state.assigned = assigned
+        saveState(state)
+    }
+
+    /// This install's random ID, made on first use.
+    public func installID() -> String {
+        var state = loadState()
+        if let id = state.install_id { return id }
+        let id = UUID().uuidString.lowercased()
+        state.install_id = id
+        saveState(state)
+        return id
     }
 
     // MARK: config.yaml

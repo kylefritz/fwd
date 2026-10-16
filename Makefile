@@ -10,7 +10,7 @@ endif
 VERSION ?= dev
 PREFIX ?= /Applications
 
-.PHONY: build test app install clean
+.PHONY: build test app install clean stats
 
 build:
 	swift build -c release
@@ -26,6 +26,9 @@ install: app
 	cp -R build/fwd.app "$(PREFIX)/fwd.app"
 	mkdir -p "$(HOME)/.local/bin"
 	ln -sf "$(PREFIX)/fwd.app/Contents/Resources/bin/fwd" "$(HOME)/.local/bin/fwd"
+
+stats:
+	scripts/stats.sh
 
 clean:
 	rm -rf .build build

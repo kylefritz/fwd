@@ -31,6 +31,15 @@ func tempPaths() -> Paths {
         #expect(try Store.decodePorts("hosts:\n  vdesk:\n  - port: 8765\n").hosts["vdesk"]?.first?.keep == false)
     }
 
+    @Test func theInstallIDIsStableAndSurvivesSavingPorts() throws {
+        let store = Store(paths: tempPaths())
+        let id = store.installID()
+        #expect(UUID(uuidString: id) != nil)
+        store.saveSticky(["devbox|3000|3000": 3001])
+        #expect(store.installID() == id)
+        #expect(store.loadSticky() == ["devbox|3000|3000": 3001])
+    }
+
     @Test func missingAndEmptyFilesAreEmpty() throws {
         let store = Store(paths: tempPaths())
         #expect(try store.loadPorts() == PortsFile())

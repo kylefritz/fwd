@@ -9,6 +9,8 @@ final class TestHTTPServer: @unchecked Sendable {
     private let lock = NSLock()
     private var routes: [String: (status: Int, body: Data)] = [:]
     private(set) var hits: [String] = []
+    /// Each request's full text, headers included.
+    private(set) var requests: [String] = []
 
     init() throws {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -55,6 +57,7 @@ final class TestHTTPServer: @unchecked Sendable {
         let path = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
         lock.lock()
         hits.append(path)
+        requests.append(request)
         let route = routes[path]
         lock.unlock()
         let status = route?.status ?? 404
@@ -109,7 +112,7 @@ final class TestHTTPServer: @unchecked Sendable {
                  signatureOK: Bool = true) -> Updater {
         Updater(releasesURL: server.url("/latest"), bundleURL: installed, currentVersion: version,
                 log: Log(file: work.appendingPathComponent("log")), kind: kind,
-                verifySignature: { _ in signatureOK })
+                verifySignature: { _ in signatureOK }, trustedDownloads: server.url("/").absoluteString)
     }
 
     @Test func versionOrdering() {
@@ -163,7 +166,7 @@ final class TestHTTPServer: @unchecked Sendable {
         let u = Updater(releasesURL: server.url("/latest"), releasesListURL: server.url("/list"),
                         bundleURL: installed, currentVersion: "0.1.0",
                         log: Log(file: work.appendingPathComponent("log")), kind: .release,
-                        verifySignature: { _ in true }, channel: { channel })
+                        verifySignature: { _ in true }, trustedDownloads: server.url("/").absoluteString, channel: { channel })
         await u.check()
         #expect(u.state == .upToDate, "stable ignores prereleases")
         #expect(!server.hits.contains("/list"))
@@ -200,7 +203,7 @@ final class TestHTTPServer: @unchecked Sendable {
         let u = Updater(releasesURL: server.url("/latest"), releasesListURL: server.url("/list"),
                         bundleURL: installed, currentVersion: "0.1.1-beta.58",
                         log: Log(file: work.appendingPathComponent("log")), kind: .release,
-                        verifySignature: { _ in true }, channel: { .beta })
+                        verifySignature: { _ in true }, trustedDownloads: server.url("/").absoluteString, channel: { .beta })
         await u.check()
         #expect(u.state == .ready(version: "0.1.1", notes: URL(string: "https://example.com/v0.1.1")))
     }
@@ -215,6 +218,10 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(try channel("update_channel: beta\n") == .beta)
         #expect(try channel("check_for_updates: true\n") == .stable)
         #expect(try channel("update_channel: nightly\n") == .stable, "an unknown channel falls back to stable")
+        #expect(try store.loadPreferences().sendUsageStats == true, "on unless turned off")
+        try "send_usage_stats: false\n".write(to: store.paths.preferencesFile, atomically: true, encoding: .utf8)
+        #expect(store.loadPreferences().sendUsageStats == false)
+        #expect(store.loadPreferences().checkForUpdates == true)
     }
 
     @Test func installKindDetection() {
@@ -223,6 +230,85 @@ final class TestHTTPServer: @unchecked Sendable {
         let brew = URL(fileURLWithPath: "/opt/homebrew/Cellar/fwd/1.0.0/fwd.app")
         #expect(Updater.detectKind(bundleURL: brew, version: "1.0.0") == .homebrew)
         #expect(Updater.homebrewCurrentBundle(for: brew)?.path == "/opt/homebrew/opt/fwd/fwd.app")
+    }
+
+    // MARK: Counting installs
+
+    func counted(_ github: TestHTTPServer, installed: URL, stats: TestHTTPServer) -> Updater {
+        Updater(releasesURL: github.url("/latest"), releasesListURL: github.url("/list"),
+                bundleURL: installed, currentVersion: "1.0.0",
+                log: Log(file: work.appendingPathComponent("log")), kind: .release,
+                verifySignature: { _ in true }, trustedDownloads: github.url("/").absoluteString,
+                statsServer: stats.url("/"), installID: "test-install", osVersion: "26.1")
+    }
+
+    @Test func eachCheckPingsTheStatsServerAndAsksGitHubDirectly() async throws {
+        let github = try TestHTTPServer()
+        let stats = try TestHTTPServer()
+        defer { github.stop(); stats.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "1.0.0")
+        github.route("/latest", body: releaseJSON(tag: "v1.0.0", server: github))
+        stats.route("/v1/ping", status: 204, body: Data())
+        let u = counted(github, installed: installed, stats: stats)
+        await u.check()
+        #expect(u.state == .upToDate)
+        #expect(github.hits.contains("/latest"), "release info always comes from GitHub")
+        try await eventually("pinged") { !stats.requests.isEmpty }
+        let ping = try #require(stats.requests.first).lowercased()
+        #expect(ping.hasPrefix("post /v1/ping "))
+        #expect(ping.contains("x-fwd-install: test-install"))
+        #expect(ping.contains("x-fwd-version: 1.0.0"))
+        #expect(ping.contains("x-fwd-channel: stable"))
+        #expect(ping.contains("x-fwd-os: 26.1"))
+        #expect(!(github.requests.first ?? "").lowercased().contains("x-fwd-install"),
+                "install info only goes to the stats server")
+    }
+
+    @Test func turningStatsOffKeepsUpdateChecks() async throws {
+        let github = try TestHTTPServer()
+        let stats = try TestHTTPServer()
+        defer { github.stop(); stats.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "1.0.0")
+        github.route("/latest", body: releaseJSON(tag: "v1.0.0", server: github))
+        stats.route("/v1/ping", status: 204, body: Data())
+        let u = Updater(releasesURL: github.url("/latest"), bundleURL: installed, currentVersion: "1.0.0",
+                        log: Log(file: work.appendingPathComponent("log")), kind: .release,
+                        statsServer: stats.url("/"), installID: "test-install", sendStats: { false })
+        await u.check()
+        #expect(u.state == .upToDate)
+        #expect(github.hits.contains("/latest"))
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(stats.requests.isEmpty)
+    }
+
+    @Test func aDownStatsServerChangesNothing() async throws {
+        let github = try TestHTTPServer()
+        let stats = try TestHTTPServer()
+        defer { github.stop() }
+        stats.stop()
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "1.0.0")
+        let next = try makeBundle(in: work.appendingPathComponent("build"), version: "1.1.0")
+        github.route("/latest", body: releaseJSON(tag: "v1.1.0", server: github))
+        github.route("/fwd.zip", body: try await zip(next))
+        let u = counted(github, installed: installed, stats: stats)
+        await u.check()
+        #expect(u.state == .ready(version: "1.1.0", notes: URL(string: "https://example.com/notes")))
+    }
+
+    @Test func downloadsOnlyComeFromThisRepositorysReleases() async throws {
+        let github = try TestHTTPServer()
+        let elsewhere = try TestHTTPServer()
+        defer { github.stop(); elsewhere.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "1.0.0")
+        github.route("/latest", body: releaseJSON(tag: "v1.1.0", server: elsewhere))
+        let u = updater(github, installed: installed, version: "1.0.0")
+        await u.check()
+        guard case .manual(_, _, let reason) = u.state else {
+            Issue.record("expected a manual install, got \(u.state)")
+            return
+        }
+        #expect(reason.contains("isn't from"))
+        #expect(!elsewhere.hits.contains("/fwd.zip"))
     }
 
     @Test func aReadyUpdateStaysInstallableWhileANewerOneFails() async throws {
