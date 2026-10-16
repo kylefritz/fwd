@@ -4,3 +4,5 @@
 .DS_Store
 .swiftpm/
 build/
+# Local secrets (direnv); never commit.
+.envrc

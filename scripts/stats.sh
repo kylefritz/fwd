@@ -8,10 +8,13 @@
 # (release, homebrew, source), blob5 macOS, blob6 country, blob7 IP.
 #
 # The Cloudflare token needs "Account Analytics Read". It's read from
-# CLOUDFLARE_API_TOKEN, or else from the macOS keychain item "fwd-stats":
+# CLOUDFLARE_API_TOKEN (set in the repo's .envrc), or else from the macOS
+# keychain item "fwd-stats":
 #   security add-generic-password -a "$USER" -s fwd-stats -w
 set -eu
 
+# The repo's git-ignored .envrc holds the token; hooks don't run direnv.
+if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && [ -f .envrc ]; then . ./.envrc; fi
 ACCOUNT="${CLOUDFLARE_ACCOUNT_ID:-d945de32e870f58f386eb588413a9960}"
 TOKEN="${CLOUDFLARE_API_TOKEN:-$(security find-generic-password -s fwd-stats -w 2>/dev/null || true)}"
 
