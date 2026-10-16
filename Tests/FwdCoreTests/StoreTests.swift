@@ -40,6 +40,18 @@ func tempPaths() -> Paths {
         #expect(store.loadSticky() == ["devbox|3000|3000": 3001])
     }
 
+    @Test func aMissingSettingsFileIsCreatedWithEveryOptionExplained() throws {
+        let store = Store(paths: tempPaths())
+        try store.ensurePreferencesFile()
+        let text = try String(contentsOf: store.paths.preferencesFile, encoding: .utf8)
+        for key in ["check_for_updates", "send_usage_stats", "update_channel"] { #expect(text.contains(key)) }
+        #expect(store.loadPreferences() == Preferences(), "the file as written means the defaults")
+
+        try "update_channel: beta\n".write(to: store.paths.preferencesFile, atomically: true, encoding: .utf8)
+        try store.ensurePreferencesFile()
+        #expect(store.loadPreferences().updateChannel == .beta, "an existing file is left alone")
+    }
+
     @Test func missingAndEmptyFilesAreEmpty() throws {
         let store = Store(paths: tempPaths())
         #expect(try store.loadPorts() == PortsFile())

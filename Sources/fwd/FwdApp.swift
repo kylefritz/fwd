@@ -256,6 +256,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model.log.write("couldn't create \(file.path): \(error.localizedDescription)")
             return
         }
+        openInEditor(file, name: "ssh config")
+    }
+
+    /// Opens config.yaml, writing one with every option explained first if
+    /// there isn't one.
+    func openSettings() {
+        do {
+            try model.store.ensurePreferencesFile()
+        } catch {
+            model.log.write("couldn't create \(model.paths.preferencesFile.path): \(error.localizedDescription)")
+            return
+        }
+        openInEditor(model.paths.preferencesFile, name: "settings")
+    }
+
+    /// Opens `file` in VS Code if it's installed, else `$EDITOR` in Terminal,
+    /// else TextEdit.
+    private func openInEditor(_ file: URL, name: String) {
         let vsCode = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.microsoft.VSCode")
         Task {
             let editor = vsCode == nil ? await loginShellEditor() : nil
@@ -264,14 +282,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 _ = try? await NSWorkspace.shared.open([file], withApplicationAt: app,
                                                        configuration: NSWorkspace.OpenConfiguration())
             case .terminal(let command):
-                runInTerminal(name: "edit-ssh-config", command: "\(command) \(shellQuote(file.path))")
+                runInTerminal(name: "edit-\(Paths.shortHash(file.path))", command: "\(command) \(shellQuote(file.path))")
             case .textEdit:
                 if let textEdit = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit") {
                     _ = try? await NSWorkspace.shared.open([file], withApplicationAt: textEdit,
                                                            configuration: NSWorkspace.OpenConfiguration())
                 }
             }
-            model.log.write("opened the ssh config")
+            model.log.write("opened the \(name)")
         }
     }
 

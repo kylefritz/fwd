@@ -373,10 +373,12 @@ other order, fwd's entry is bumped to a nearby port as usual.
   Sharing on that machine instead of opening a dead connection. Auth or
   connection problems surface as the host's usual errors; after 30 s without
   a connection it says so and the forward keeps retrying.
-- Footer: "Turn all off", the version, and a ••• menu: "Open ssh config",
-  "Open log", "Copy log location", "Report a bug…", "Request a feature…",
-  "Launch at login" (a checkbox), "Install terminal command", "Check for
-  updates", then "Pop out into a window" (panel only) and "Quit fwd".
+- Footer: "Turn all off", the version, and a ••• menu in four groups, Title
+  Case as macOS menus are: "Edit SSH Config", "Edit fwd Settings" (creates
+  config.yaml with every option commented), "Show Log" (⌥: "Copy Log
+  Location"); "Report a Bug…", "Request a Feature…"; "Check for Updates…",
+  "Launch at Login" (a checkbox), "Install Terminal Command"; "Pop Out into a
+  Window" (panel only), "Quit fwd" (⌘Q).
 - First run with no usable hosts shows a short explanation, an "Open ssh
   config" button, an "Add an example host" button and a link to the README
   instead of an empty panel. The example is a commented `Host devbox` block
@@ -412,7 +414,7 @@ cancelled and bumped, sleep, wake and network events, config and `ports.yaml`
 reloads, update checks, and all ssh stderr. Scan results are logged only when
 they change. When the file passes 5 MB it is renamed to
 `~/Library/Logs/fwd/fwd.log.1`, replacing the previous one. The footer's
-"Copy log location" puts the full log path on the clipboard, which is the
+"Copy Log Location" (⌥ on "Show Log") puts the full log path on the clipboard, which is the
 thing to paste into a bug report.
 
 ## Privacy
@@ -524,7 +526,7 @@ app are not quarantined and launch normally.
 
 ## Reporting
 
-- **Report a bug…** and **Request a feature…** in the ••• menu open a window
+- **Report a Bug…** and **Request a Feature…** in the ••• menu open a window
   with the kind, a title, how much log to include (none, 15 minutes, 1 hour,
   24 hours, 7 days; a bug defaults to the last hour, a feature request to
   none), "Replace host names" (on by default), and a preview of exactly the
@@ -558,7 +560,7 @@ the front; a second copy is never started.
   immediately rather than tying up the terminal.
 - `fwd --version` prints the installed version; `fwd --help` prints usage.
   Those are the only arguments.
-- The footer item "Install terminal command" symlinks the script to
+- The footer item "Install Terminal Command" symlinks the script to
   `~/.local/bin/fwd`, which needs no administrator password. If that folder
   is not on `PATH`, the app shows the one line to add to the shell profile.
   The item reads "Terminal command installed" once the link exists and points

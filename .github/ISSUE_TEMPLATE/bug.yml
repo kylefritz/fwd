@@ -25,7 +25,7 @@ body:
     attributes:
       label: Log
       description: >
-        From ~/Library/Logs/fwd/fwd.log. **Report a bug…** in fwd's ••• menu fills
+        From ~/Library/Logs/fwd/fwd.log. **Report a Bug…** in fwd's ••• menu fills
         this in with tokens, IP addresses and (optionally) host names removed.
         Issues are public, so check it before submitting.
       render: text

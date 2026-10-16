@@ -134,7 +134,7 @@ viewer, fwd turns the forward off again. The remote needs Screen Sharing on
 
 `fwd` opens the window, starting the app if needed, and `fwd --version`
 prints the version. Homebrew installs the command; otherwise use **Install
-terminal command** in the ••• menu.
+Terminal Command** in the ••• menu.
 
 ## When fwd connects
 
@@ -166,7 +166,7 @@ Everything lives in plain files, so it's easy to keep in your dotfiles.
 | `~/.config/fwd/ports.yaml` | Your entries. Edit by hand if you like; changes apply within a second. |
 | `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `send_usage_stats: false` keeps them but stops the install count, `update_channel: beta` follows every build of `main`. |
 | `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken. Safe to delete. |
-| `~/Library/Logs/fwd/fwd.log` | The log. **Copy log location** in the ••• menu copies its path. |
+| `~/Library/Logs/fwd/fwd.log` | The log. **Show Log** in the ••• menu opens it; hold ⌥ for **Copy Log Location**. |
 
 ```yaml
 # ~/.config/fwd/ports.yaml
@@ -218,7 +218,7 @@ the original port again.
 <details>
 <summary><b>Anything else</b></summary>
 
-Choose **Report a bug…** in the ••• menu. Pick how much of the log to
+Choose **Report a Bug…** in the ••• menu. Pick how much of the log to
 include, check the preview, and fwd opens a prefilled GitHub issue. Sign-in
 tokens, IP addresses and your home folder are always removed, and host
 names can be. `tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing

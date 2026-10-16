@@ -317,28 +317,22 @@ struct FooterView: View {
                     .help(AppDelegate.commit.map { "Built from commit \($0)" } ?? "")
 
                 Menu {
-                    Button("Open ssh config") { app.openSSHConfig() }
-                    Button("Open log") { app.openLog() }
-                    Button("Copy log location") {
-                        app.copyLogLocation()
-                        note = "Copied \(model.paths.logFile.path)"
-                    }
-                    Button("Report a bug…") { app.showReport(.bug) }
-                    Button("Request a feature…") { app.showReport(.feature) }
-                    Divider()
-                    Toggle("Launch at login", isOn: Binding(
-                        get: { launchAtLogin },
-                        set: { wanted in
-                            if let problem = LoginItem.set(wanted) { note = "Launch at login: \(problem)" }
-                            launchAtLogin = LoginItem.isEnabled
-                        }))
-                    if CommandInstaller.isOffered {
-                        Button(commandInstalled ? "Terminal command installed" : "Install terminal command") {
-                            installCommand()
+                    Button("Edit SSH Config") { app.openSSHConfig() }
+                    Button("Edit fwd Settings") { app.openSettings() }
+                        .help("~/.config/fwd/config.yaml: updates, usage stats and the beta channel")
+                    Button("Show Log") { app.openLog() }
+                        // Hold ⌥ for the alternate.
+                        .modifierKeyAlternate(.option) {
+                            Button("Copy Log Location") {
+                                app.copyLogLocation()
+                                note = "Copied \(model.paths.logFile.path)"
+                            }
                         }
-                        .disabled(commandInstalled)
-                    }
-                    Button(updater.state == .checking ? "Checking for updates…" : "Check for updates") {
+                    Divider()
+                    Button("Report a Bug…") { app.showReport(.bug) }
+                    Button("Request a Feature…") { app.showReport(.feature) }
+                    Divider()
+                    Button(updater.state == .checking ? "Checking for Updates…" : "Check for Updates…") {
                         Task {
                             await updater.check()
                             if updater.state == .upToDate { note = "fwd \(updater.currentVersion) is the latest version." }
@@ -346,12 +340,25 @@ struct FooterView: View {
                         }
                     }
                     .disabled(updater.state == .checking)
+                    Toggle("Launch at Login", isOn: Binding(
+                        get: { launchAtLogin },
+                        set: { wanted in
+                            if let problem = LoginItem.set(wanted) { note = "Launch at login: \(problem)" }
+                            launchAtLogin = LoginItem.isEnabled
+                        }))
+                    if CommandInstaller.isOffered {
+                        Button(commandInstalled ? "Terminal Command Installed" : "Install Terminal Command") {
+                            installCommand()
+                        }
+                        .disabled(commandInstalled)
+                    }
                     Divider()
                     if !inWindow {
-                        Button("Pop out into a window") { app.showWindow() }
+                        Button("Pop Out into a Window") { app.showWindow() }
                             .help("The same panel in a window you can resize and keep open")
                     }
                     Button("Quit fwd") { NSApp.terminate(nil) }
+                        .keyboardShortcut("q")
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }

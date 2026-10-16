@@ -204,6 +204,31 @@ public final class Store {
 
     // MARK: config.yaml
 
+    /// What a new config.yaml says: every option, commented out at its default.
+    public static let preferencesTemplate = """
+        # fwd settings. Uncomment a line to change it; fwd reads this file at
+        # each update check, so no restart is needed.
+
+        # Check GitHub for new versions of fwd.
+        # check_for_updates: true
+
+        # With each update check, send a ping that counts installs: a random
+        # install ID, the version, channel, install kind and macOS version.
+        # false keeps update checks but stops the ping.
+        # send_usage_stats: true
+
+        # stable gets tagged releases; beta gets every build of main.
+        # update_channel: stable
+
+        """
+
+    /// Creates config.yaml from the template if there isn't one, so there is
+    /// something to open. Never touches an existing file.
+    public func ensurePreferencesFile() throws {
+        guard !FileManager.default.fileExists(atPath: paths.preferencesFile.path) else { return }
+        try write(Self.preferencesTemplate, to: paths.preferencesFile)
+    }
+
     public func loadPreferences() -> Preferences {
         guard let text = try? String(contentsOf: paths.preferencesFile, encoding: .utf8),
               let prefs = try? YAMLDecoder().decode(Preferences.self, from: text) else {
