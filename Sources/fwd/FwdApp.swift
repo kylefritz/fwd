@@ -72,8 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let power = SystemPowerMonitor()
     lazy var model = AppModel(paths: paths, power: power)
     lazy var updater = Updater(
-        releasesURL: paths.releasesURL, bundleURL: Bundle.main.bundleURL,
-        currentVersion: AppDelegate.version, log: model.log)
+        releasesURL: paths.releasesURL, releasesListURL: paths.releasesListURL, bundleURL: Bundle.main.bundleURL,
+        currentVersion: AppDelegate.version, log: model.log,
+        channel: { [store = model.store] in store.loadPreferences().updateChannel })
 
     private var window: NSWindow?
     private var visibleSurfaces = 0

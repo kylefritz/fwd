@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    # Betas (v0.1.1-beta.7) are published by beta.yml, not here.
+    tags: ["v*", "!v*-*"]
 
 permissions:
   contents: write

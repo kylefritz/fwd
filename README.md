@@ -133,7 +133,7 @@ version. A Homebrew install has the command already; otherwise choose
 |---|---|
 | `~/.config/fwd/ports.yaml` | Your entries. Safe to edit by hand or keep in dotfiles; changes apply within a second. |
 | `~/.config/fwd/state.yaml` | Local ports fwd chose when yours were taken. Safe to delete. |
-| `~/.config/fwd/config.yaml` | Preferences. `check_for_updates: false` turns off the update check. |
+| `~/.config/fwd/config.yaml` | Preferences. `check_for_updates: false` turns off the update check; `update_channel: beta` follows every build of `main` instead of only tagged releases. |
 | `~/Library/Logs/fwd/fwd.log` | The log. **Copy log location** in the ••• menu copies its path. |
 
 ```yaml

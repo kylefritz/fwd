@@ -173,8 +173,9 @@ hosts:
 - Sticky laptop port assignments are app-owned runtime state and live
   separately in `~/.config/fwd/state.yaml`, so `ports.yaml` stays portable
   between machines. Deleting `state.yaml` is harmless.
-- `~/.config/fwd/config.yaml` holds preferences. For now there is one,
-  `check_for_updates` (default `true`). A missing file means defaults.
+- `~/.config/fwd/config.yaml` holds preferences: `check_for_updates`
+  (default `true`) and `update_channel` (`stable` or `beta`, default
+  `stable`). A missing file means defaults.
 
 ### ssh invocation
 
@@ -473,6 +474,20 @@ collects and sends nothing else. The log stays on the machine.
   interval, with no UI.
 - A build from source reports version `dev` and never self-updates; it only
   mentions that a release exists.
+
+### Beta channel
+
+- Every commit on `main` that passes CI is published by `beta.yml` as a
+  GitHub prerelease named after the next patch: `v0.1.1-beta.<run>`. The
+  newest ten are kept; the Homebrew formula only follows tagged releases, and
+  `release.yml` ignores beta tags.
+- `update_channel: beta` in `config.yaml` makes the updater read
+  `releases?per_page=30` instead of `releases/latest` and take the highest
+  version among published (non-draft) releases of either kind. Otherwise
+  the channel is `stable`, and an unknown value means stable.
+- Versions order as `0.1.0 < 0.1.1-beta.57 < 0.1.1-beta.58 < 0.1.1`, so a beta
+  install moves onto the release that follows it. The channel is read at
+  every check; no restart needed.
 - A Homebrew install never replaces itself either, because Homebrew owns
   those files. When a newer release exists the panel shows "fwd X.Y.Z is
   available" with the command `brew upgrade fwd` and a copy button, then

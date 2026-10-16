@@ -1,0 +1,58 @@
+name: Beta
+
+# Every commit on main that passes CI becomes a prerelease, named after the
+# next patch version: v0.1.1-beta.<run>. Installs with `update_channel: beta`
+# in ~/.config/fwd/config.yaml pick these up; everyone else only sees tagged
+# releases, because GitHub's "latest release" skips prereleases.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: beta
+  cancel-in-progress: false
+
+jobs:
+  beta:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: macos-26
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - name: Version
+        run: |
+          last=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -v -e '-' | head -1)
+          IFS=. read -r major minor patch <<< "${last:-v0.0.0}"
+          major=${major#v}
+          echo "VERSION=$major.$minor.$((patch + 1))-beta.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+      - name: Build the app
+        run: make app VERSION="$VERSION"
+      - name: Check the bundle
+        run: |
+          test "$(build/fwd.app/Contents/Resources/bin/fwd --version)" = "$VERSION"
+          codesign --verify --deep --strict build/fwd.app
+      - name: Publish the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" build/fwd.zip --prerelease --target "$SHA" \
+            --title "fwd $VERSION" \
+            --notes "Beta built from ${SHA:0:7}. Set \`update_channel: beta\` in ~/.config/fwd/config.yaml to follow these."
+      - name: Keep only the newest ten betas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' \
+            | tail -n +11 \
+            | xargs -r -n1 gh release delete --yes --cleanup-tag

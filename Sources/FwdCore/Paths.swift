@@ -10,6 +10,8 @@ public struct Paths: Sendable {
     /// Control sockets live here. Must be short: socket paths cap at 104 bytes.
     public var socketDir: URL
     public var releasesURL: URL
+    /// Recent releases including prereleases, for the beta channel.
+    public var releasesListURL: URL
 
     public static let repository = "kylefritz/fwd"
     public static let bundleIdentifier = "io.github.kylefritz.fwd"
@@ -22,16 +24,20 @@ public struct Paths: Sendable {
     public var stateFile: URL { configDir.appendingPathComponent("state.yaml") }
     public var preferencesFile: URL { configDir.appendingPathComponent("config.yaml") }
 
-    public init(configDir: URL, logFile: URL, sshConfigOverride: URL?, socketDir: URL, releasesURL: URL) {
+    public init(configDir: URL, logFile: URL, sshConfigOverride: URL?, socketDir: URL, releasesURL: URL,
+                releasesListURL: URL? = nil) {
         self.configDir = configDir
         self.logFile = logFile
         self.sshConfigOverride = sshConfigOverride
         self.socketDir = socketDir
         self.releasesURL = releasesURL
+        self.releasesListURL = releasesListURL
+            ?? URL(string: "https://api.github.com/repos/\(Paths.repository)/releases?per_page=30")!
     }
 
-    /// Defaults, with `FWD_HOME`, `FWD_SSH_CONFIG` and `FWD_RELEASES_URL`
-    /// honored so a test or a curious user can sandbox the app.
+    /// Defaults, with `FWD_HOME`, `FWD_SSH_CONFIG`, `FWD_RELEASES_URL` and
+    /// `FWD_RELEASES_LIST_URL` honored so a test or a curious user can
+    /// sandbox the app.
     public static func fromEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment) -> Paths {
         let home = FileManager.default.homeDirectoryForCurrentUser
         var configDir = home.appendingPathComponent(".config/fwd")
@@ -46,8 +52,9 @@ public struct Paths: Sendable {
         let sshConfig = env["FWD_SSH_CONFIG"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
         let releases = env["FWD_RELEASES_URL"].flatMap(URL.init(string:))
             ?? URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
+        let list = env["FWD_RELEASES_LIST_URL"].flatMap(URL.init(string:))
         return Paths(configDir: configDir, logFile: logFile, sshConfigOverride: sshConfig,
-                     socketDir: socketDir, releasesURL: releases)
+                     socketDir: socketDir, releasesURL: releases, releasesListURL: list)
     }
 
     /// Short stable hash (FNV-1a), for socket file names.

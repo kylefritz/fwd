@@ -125,6 +125,83 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(Version("-1") == nil)
     }
 
+    @Test func betaVersionsSortBeforeTheirRelease() {
+        #expect(Version("v0.1.1-beta.57")!.description == "0.1.1-beta.57")
+        #expect(Version("0.1.1-beta.57")! > Version("0.1.0")!)
+        #expect(Version("0.1.1-beta.57")! < Version("0.1.1")!, "the release replaces its betas")
+        #expect(Version("0.1.1-beta.58")! > Version("0.1.1-beta.57")!)
+        #expect(Version("0.1.1-beta.9")! < Version("0.1.1-beta.10")!)
+        #expect(Version("0.1.2-beta.1")! > Version("0.1.1")!)
+        #expect(Version("0.1.1-beta")  == nil)
+        #expect(Version("0.1.1-rc.1") == nil)
+    }
+
+    func listJSON(_ releases: [(tag: String, prerelease: Bool, draft: Bool)], server: TestHTTPServer) -> Data {
+        let items = releases.map {
+            "{\"tag_name\": \"\($0.tag)\", \"prerelease\": \($0.prerelease), \"draft\": \($0.draft), "
+                + "\"html_url\": \"https://example.com/\($0.tag)\", "
+                + "\"assets\": [{\"name\": \"fwd.zip\", \"browser_download_url\": \"\(server.url("/fwd.zip"))\"}]}"
+        }
+        return Data("[\(items.joined(separator: ","))]".utf8)
+    }
+
+    @Test func theBetaChannelTakesTheNewestReleaseOfAnyKind() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.1.0")
+        let beta = try makeBundle(in: work.appendingPathComponent("build"), version: "0.1.1-beta.58")
+        server.route("/latest", body: releaseJSON(tag: "v0.1.0", server: server))
+        server.route("/list", body: listJSON([
+            ("v0.1.1-beta.59", true, true),  // a draft isn't published
+            ("v0.1.1-beta.58", true, false),
+            ("v0.1.1-beta.57", true, false),
+            ("v0.1.0", false, false),
+        ], server: server))
+        server.route("/fwd.zip", body: try await zip(beta))
+
+        var channel = UpdateChannel.stable
+        let u = Updater(releasesURL: server.url("/latest"), releasesListURL: server.url("/list"),
+                        bundleURL: installed, currentVersion: "0.1.0",
+                        log: Log(file: work.appendingPathComponent("log")), kind: .release,
+                        verifySignature: { _ in true }, channel: { channel })
+        await u.check()
+        #expect(u.state == .upToDate, "stable ignores prereleases")
+        #expect(!server.hits.contains("/list"))
+
+        channel = .beta
+        await u.check()
+        #expect(u.state == .ready(version: "0.1.1-beta.58", notes: URL(string: "https://example.com/v0.1.1-beta.58")))
+        _ = try u.install()
+        #expect(Updater.bundleVersion(installed) == "0.1.1-beta.58")
+    }
+
+    @Test func aBetaUserMovesOntoTheRelease() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.1.1-beta.58")
+        let release = try makeBundle(in: work.appendingPathComponent("build"), version: "0.1.1")
+        server.route("/list", body: listJSON([("v0.1.1", false, false), ("v0.1.1-beta.58", true, false)], server: server))
+        server.route("/fwd.zip", body: try await zip(release))
+        let u = Updater(releasesURL: server.url("/latest"), releasesListURL: server.url("/list"),
+                        bundleURL: installed, currentVersion: "0.1.1-beta.58",
+                        log: Log(file: work.appendingPathComponent("log")), kind: .release,
+                        verifySignature: { _ in true }, channel: { .beta })
+        await u.check()
+        #expect(u.state == .ready(version: "0.1.1", notes: URL(string: "https://example.com/v0.1.1")))
+    }
+
+    @Test func theChannelIsReadFromConfig() throws {
+        let store = Store(paths: tempPaths())
+        try FileManager.default.createDirectory(at: store.paths.configDir, withIntermediateDirectories: true)
+        func channel(_ yaml: String) throws -> UpdateChannel {
+            try yaml.write(to: store.paths.preferencesFile, atomically: true, encoding: .utf8)
+            return store.loadPreferences().updateChannel
+        }
+        #expect(try channel("update_channel: beta\n") == .beta)
+        #expect(try channel("check_for_updates: true\n") == .stable)
+        #expect(try channel("update_channel: nightly\n") == .stable, "an unknown channel falls back to stable")
+    }
+
     @Test func installKindDetection() {
         #expect(Updater.detectKind(bundleURL: URL(fileURLWithPath: "/Applications/fwd.app"), version: "1.0.0") == .release)
         #expect(Updater.detectKind(bundleURL: URL(fileURLWithPath: "/Applications/fwd.app"), version: "dev") == .source)

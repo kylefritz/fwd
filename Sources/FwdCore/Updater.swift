@@ -1,13 +1,24 @@
 import Combine
 import Foundation
 
-/// A dotted numeric version such as `1.4.0`, with or without a leading `v`.
+/// A dotted numeric version such as `1.4.0`, with or without a leading `v`,
+/// optionally a beta of it: `1.4.0-beta.7` comes after 1.3.x and before 1.4.0.
 public struct Version: Comparable, Equatable, CustomStringConvertible, Sendable {
     public let parts: [Int]
+    /// The beta number, or nil for a release.
+    public let beta: Int?
 
     public init?(_ text: String) {
         var s = Substring(text.trimmingCharacters(in: .whitespaces))
         if s.hasPrefix("v") || s.hasPrefix("V") { s = s.dropFirst() }
+        if let dash = s.firstIndex(of: "-") {
+            let suffix = s[s.index(after: dash)...]
+            guard suffix.hasPrefix("beta."), let n = Int(suffix.dropFirst("beta.".count)), n >= 0 else { return nil }
+            beta = n
+            s = s[..<dash]
+        } else {
+            beta = nil
+        }
         let pieces = s.split(separator: ".", omittingEmptySubsequences: false)
         guard !pieces.isEmpty, pieces.count <= 4 else { return nil }
         var parts: [Int] = []
@@ -24,11 +35,24 @@ public struct Version: Comparable, Equatable, CustomStringConvertible, Sendable 
             let y = i < b.parts.count ? b.parts[i] : 0
             if x != y { return x < y }
         }
-        return false
+        switch (a.beta, b.beta) {
+        case let (x?, y?): return x < y
+        case (_?, nil): return true
+        default: return false
+        }
     }
 
     public static func == (a: Version, b: Version) -> Bool { !(a < b) && !(b < a) }
-    public var description: String { parts.map(String.init).joined(separator: ".") }
+    public var description: String {
+        parts.map(String.init).joined(separator: ".") + (beta.map { "-beta.\($0)" } ?? "")
+    }
+}
+
+/// Which releases an install follows: tagged releases only, or every
+/// prerelease built from main as well. Set with `update_channel` in config.yaml.
+public enum UpdateChannel: String, Sendable {
+    case stable
+    case beta
 }
 
 /// How this copy of the app got onto the machine, which decides how it updates.
@@ -61,6 +85,7 @@ private struct Release: Decodable {
     let tag_name: String
     let html_url: URL?
     let assets: [Asset]?
+    let draft: Bool?
 }
 
 @MainActor
@@ -72,18 +97,26 @@ public final class Updater: ObservableObject {
     public static let assetName = "fwd.zip"
 
     private let releasesURL: URL
+    private let releasesListURL: URL?
     private let bundleURL: URL
     private let log: Log
     private let session: URLSession
     private let verifySignature: (URL) async -> Bool
+    /// Read at every check, so editing config.yaml takes effect without a restart.
+    private let channel: () -> UpdateChannel
     private var staged: URL?
     private let stagingDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("fwd-update-\(UUID().uuidString.prefix(8))")
 
-    public init(releasesURL: URL, bundleURL: URL, currentVersion: String, log: Log,
+    /// `releasesURL` answers with the latest release (GitHub skips
+    /// prereleases there); `releasesListURL` with all recent ones, for beta.
+    public init(releasesURL: URL, releasesListURL: URL? = nil, bundleURL: URL, currentVersion: String, log: Log,
                 kind: InstallKind? = nil, session: URLSession = .shared,
-                verifySignature: ((URL) async -> Bool)? = nil) {
+                verifySignature: ((URL) async -> Bool)? = nil,
+                channel: @escaping () -> UpdateChannel = { .stable }) {
         self.releasesURL = releasesURL
+        self.releasesListURL = releasesListURL
+        self.channel = channel
         self.bundleURL = bundleURL
         self.currentVersion = currentVersion
         self.log = log
@@ -129,18 +162,9 @@ public final class Updater: ObservableObject {
         // Keep a waiting "Restart to update" on screen while re-checking.
         if case .ready = before {} else { state = .checking }
         do {
-            var request = URLRequest(url: releasesURL)
-            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-            request.timeoutInterval = 20
-            let (data, response) = try await session.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                throw URLError(.badServerResponse)
-            }
-            let release = try JSONDecoder().decode(Release.self, from: data)
-            guard let latest = Version(release.tag_name) else {
-                throw URLError(.cannotParseResponse)
-            }
-            log.write("update check: latest is \(latest), running \(currentVersion)")
+            let beta = channel() == .beta && releasesListURL != nil
+            let (release, latest) = try await newestRelease(beta: beta)
+            log.write("update check\(beta ? " (beta)" : ""): latest is \(latest), running \(currentVersion)")
 
             switch kind {
             case .source:
@@ -174,6 +198,23 @@ public final class Updater: ObservableObject {
             log.write("update check failed: \(error.localizedDescription)")
             state = (before == .checking) ? .idle : before
         }
+    }
+
+    /// The latest release, or on beta the newest published one of any kind.
+    private func newestRelease(beta: Bool) async throws -> (Release, Version) {
+        var request = URLRequest(url: beta ? releasesListURL! : releasesURL)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+        let (data, response) = try await session.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw URLError(.badServerResponse)
+        }
+        let candidates = beta
+            ? try JSONDecoder().decode([Release].self, from: data).filter { $0.draft != true }
+            : [try JSONDecoder().decode(Release.self, from: data)]
+        let versioned = candidates.compactMap { release in Version(release.tag_name).map { (release, $0) } }
+        guard let newest = versioned.max(by: { $0.1 < $1.1 }) else { throw URLError(.cannotParseResponse) }
+        return newest
     }
 
     /// If a newer version is already installed by Homebrew, offers the

@@ -84,13 +84,27 @@ public struct PortsFile: Codable, Equatable, Sendable {
 
 public struct Preferences: Codable, Equatable, Sendable {
     public var checkForUpdates: Bool = true
+    /// `beta` follows every build of main; anything else is stable.
+    public var updateChannel: UpdateChannel = .stable
 
-    enum CodingKeys: String, CodingKey { case checkForUpdates = "check_for_updates" }
+    enum CodingKeys: String, CodingKey {
+        case checkForUpdates = "check_for_updates"
+        case updateChannel = "update_channel"
+    }
 
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? true
+        // A typo shouldn't throw away the other settings.
+        let channel = try? c.decodeIfPresent(String.self, forKey: .updateChannel)
+        updateChannel = channel.flatMap { UpdateChannel(rawValue: $0.lowercased()) } ?? .stable
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(checkForUpdates, forKey: .checkForUpdates)
+        try c.encode(updateChannel.rawValue, forKey: .updateChannel)
     }
 }
 
