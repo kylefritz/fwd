@@ -31,7 +31,8 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" build/fwd.zip --title "fwd $VERSION" --generate-notes
+        # The install notes come first, then GitHub's list of changes.
+        run: gh release create "$GITHUB_REF_NAME" build/fwd.zip --title "fwd $VERSION" --notes-file .github/release-notes.md --generate-notes
       - name: Update the Homebrew tap
         if: ${{ env.TAP_DEPLOY_KEY != '' }}
         run: scripts/update-formula.sh "$VERSION"
