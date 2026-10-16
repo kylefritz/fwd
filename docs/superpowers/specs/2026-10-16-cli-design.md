@@ -61,7 +61,9 @@ Positional arguments after the command are read in order:
 1. **Host.** If the first argument is a host fwd knows (in the ssh config
    or in `ports.yaml`), it is the host. Otherwise the host is left out.
 2. **Ports.** Each following argument is a port in the panel's syntax:
-   `3000`, `3000->4000`, `3000 -> 4000` (quoted), `31**`, `3*** -> 4***`.
+   `3000`, `"3000->4000"`, `"3000 -> 4000"`, `"31**"`, `"3*** -> 4***"`. Ports
+   with `->` or `*` need quotes in a shell, which reads `>` as a redirect
+   and `*` as a filename pattern.
 3. **Names.** An argument that starts with a letter, right after a port, is
    that port's name: `fwd devbox 5173 web 8000 api`. A quoted `"5173 web"`
    works too.

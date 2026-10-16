@@ -62,6 +62,19 @@ import Testing
         await rig.model.shutdown()
     }
 
+    @Test func aPortThatIsntListedIsAnErrorNotASuccess() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        let h = handler(rig)
+        _ = await h.handle(ControlRequest(cmd: "forward", args: ["devbox", "3000"], timeout: 5))
+        for cmd in ["off", "remove", "keep"] {
+            let reply = await h.handle(ControlRequest(cmd: cmd, args: ["devbox", "3001"]))
+            #expect(reply.exitCode == .failed, "\(cmd)")
+            #expect(reply.error == "3001 isn't in devbox's list", "\(cmd)")
+        }
+        await rig.model.shutdown()
+    }
+
     @Test func offRemoveAndKeep() async throws {
         let rig = try Rig()
         await rig.model.start(runTimer: false)

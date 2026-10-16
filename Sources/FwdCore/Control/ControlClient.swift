@@ -17,6 +17,9 @@ public enum ControlClient {
             }
         }
         guard connected == 0 else { throw Unreachable() }
+        guard UnixSocket.peerIsMe(fd) else {
+            throw ControlError(.unreachable, "the fwd control socket belongs to another user; not using it")
+        }
         UnixSocket.setTimeout(fd, timeout)
         do {
             try UnixSocket.writeAll(fd, request.encodedLine())

@@ -88,6 +88,17 @@ public final class ControlHandler {
         }
     }
 
+    /// A command on ports that aren't in the host's list does nothing, so
+    /// it says so instead of answering with an empty success.
+    private func requireListed(_ target: ControlTarget) throws {
+        let listed = Set(card(target.host)?.pills.map(\.text) ?? [])
+        for port in target.ports {
+            guard let text = ControlTarget.canonical(port), listed.contains(text) else {
+                throw ControlError.failed("\(ControlTarget.canonical(port) ?? port) isn't in \(target.host)'s list")
+            }
+        }
+    }
+
     // MARK: Commands
 
     private func status(_ request: ControlRequest) throws -> ControlReply {
@@ -146,6 +157,7 @@ public final class ControlHandler {
 
     private func off(_ request: ControlRequest) async throws -> ControlReply {
         let target = try target(request, needsPorts: true)
+        try requireListed(target)
         for port in target.ports {
             guard let text = ControlTarget.canonical(port) else { continue }
             if card(target.host)?.pills.first(where: { $0.text == text })?.on == true {
@@ -157,6 +169,7 @@ public final class ControlHandler {
 
     private func remove(_ request: ControlRequest) async throws -> ControlReply {
         let target = try target(request, needsPorts: true)
+        try requireListed(target)
         for port in target.ports {
             if let text = ControlTarget.canonical(port) { try await model.remove(host: target.host, text: text) }
         }
@@ -165,6 +178,7 @@ public final class ControlHandler {
 
     private func keep(_ request: ControlRequest) async throws -> ControlReply {
         let target = try target(request, needsPorts: true)
+        try requireListed(target)
         for port in target.ports {
             if let text = ControlTarget.canonical(port) {
                 try await model.setKeep(host: target.host, text: text, keep: !request.off)

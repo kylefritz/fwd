@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import FwdCore
 
 /// The fwd.app this command was installed in, found through the symlink in
@@ -50,13 +50,19 @@ case .help:
     print(CLIArguments.help)
 case .agents:
     print(CLIArguments.agentInstructions)
-case .usage(let message):
+case .usage(let message, let json):
+    if json {
+        print(ControlFormat.json(.failure(.usage(message))))
+        exit(Int32(ExitCode.usage.rawValue))
+    }
     fail(message, .usage)
 case .openWindow:
     openApp(window: true)
 case .request(let request, let json):
     let socket = Paths.fromEnvironment().controlSocket.path
-    let reply = CLIRunner.send(request, socket: socket, launch: { openApp(window: false) })
+    let reply = CLIRunner.send(request, socket: socket, launch: { openApp(window: false) }, isRunning: {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: Paths.bundleIdentifier).isEmpty
+    })
     if json {
         print(ControlFormat.json(reply))
     } else if reply.ok {

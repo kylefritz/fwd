@@ -8,8 +8,9 @@ public enum Invocation: Equatable {
     /// Print instructions for coding agents; no app needed.
     case agents
     case request(ControlRequest, json: Bool)
-    /// Bad usage, with the message to print; exit 2.
-    case usage(String)
+    /// Bad usage, with the message to print; exit 2. `json` says the
+    /// command line asked for JSON, so the error goes out as JSON too.
+    case usage(String, json: Bool)
 }
 
 /// Turns `fwd`'s arguments into an invocation. Hosts and ports aren't
@@ -22,6 +23,9 @@ public enum CLIArguments {
         if args == ["--version"] || args == ["-v"] { return .version }
         if args.contains("--help") || args.contains("-h") { return .help }
         if args == ["agents"] { return .agents }
+        // Known up front, so even a mistake in the arguments answers in JSON.
+        let wantsJSON = args.contains("--json")
+        func usage(_ message: String) -> Invocation { .usage(message, json: wantsJSON) }
 
         var json = false, keep = false, wait = false, off = false, all = false
         var timeout: Double?
@@ -37,26 +41,26 @@ public enum CLIArguments {
             case "--off": off = true
             case "--all": all = true
             case "--timeout":
-                guard i < args.count else { return .usage("--timeout needs a number of seconds") }
+                guard i < args.count else { return usage("--timeout needs a number of seconds") }
                 guard let seconds = Double(args[i]), seconds > 0 else {
-                    return .usage("--timeout needs a number of seconds, not \"\(args[i])\"")
+                    return usage("--timeout needs a number of seconds, not \"\(args[i])\"")
                 }
                 timeout = seconds
                 i += 1
             default:
                 if arg.hasPrefix("--timeout=") {
                     guard let seconds = Double(arg.dropFirst("--timeout=".count)), seconds > 0 else {
-                        return .usage("--timeout needs a number of seconds")
+                        return usage("--timeout needs a number of seconds")
                     }
                     timeout = seconds
                 } else if arg.hasPrefix("-"), arg.count > 1, Double(arg) == nil {
-                    return .usage("unknown option \(arg) (try fwd --help)")
+                    return usage("unknown option \(arg) (try fwd --help)")
                 } else {
                     words.append(arg)
                 }
             }
         }
-        guard let first = words.first else { return .usage("say what to do, like: fwd 3000 (try fwd --help)") }
+        guard let first = words.first else { return usage("say what to do, like: fwd 3000 (try fwd --help)") }
         let isCommand = commands.contains(first)
         return .request(ControlRequest(cmd: isCommand ? first : "forward",
                                        args: isCommand ? Array(words.dropFirst()) : words,
@@ -88,7 +92,9 @@ public enum CLIArguments {
           --timeout S     seconds to wait (forward 30, connect 30, wait 60)
 
         The host can be left out when exactly one host is connected.
-        Ports: 3000   3000->4000   31** (3100-3199)   "5173 web" (with a name)
+        Ports: 3000   "3000->4000"   "31**" (3100-3199)   "5173 web" (with a name)
+        Quote ports with -> or *: the shell reads > as a redirect and * as a
+        filename pattern.
 
         Exit codes:
           0 done

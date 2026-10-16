@@ -21,6 +21,16 @@ import Testing
         #expect(count.launches == 1)
     }
 
+    @Test func anOlderAppThatIsRunningIsNamedAsTheProblem() async {
+        let path = "/tmp/fwd-t-\(UUID().uuidString.prefix(8)).sock"
+        let reply = await Task.detached {
+            CLIRunner.send(ControlRequest(cmd: "status"), socket: path, launch: {}, isRunning: { true },
+                           attempts: 3, delay: 0.01)
+        }.value
+        #expect(reply.exitCode == .unreachable)
+        #expect(reply.error == "fwd is running but doesn't answer the command line; quit and reopen it (it may be an older version)")
+    }
+
     @Test func givesUpWithExitThree() async {
         let path = "/tmp/fwd-t-\(UUID().uuidString.prefix(8)).sock"
         let reply = await Task.detached {

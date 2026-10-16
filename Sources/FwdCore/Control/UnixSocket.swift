@@ -45,6 +45,15 @@ enum UnixSocket {
         }
     }
 
+    /// Whether the other end of a connected socket is this same user. The
+    /// server checks the command, and the command checks the server, so
+    /// another account can't stand in for either.
+    static func peerIsMe(_ fd: Int32) -> Bool {
+        var uid: uid_t = 0
+        var gid: gid_t = 0
+        return getpeereid(fd, &uid, &gid) == 0 && uid == getuid()
+    }
+
     /// Read and write timeouts, and no SIGPIPE if the other end goes away.
     static func setTimeout(_ fd: Int32, _ seconds: TimeInterval) {
         var tv = timeval(tv_sec: Int(seconds), tv_usec: Int32((seconds - floor(seconds)) * 1_000_000))

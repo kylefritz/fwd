@@ -41,7 +41,7 @@ import Testing
     }
 
     @Test func badUsageIsCaughtHere() {
-        if case .usage(let m) = CLIArguments.parse(["3000", "--frobnicate"]) { #expect(m.contains("--frobnicate")) }
+        if case .usage(let m, _) = CLIArguments.parse(["3000", "--frobnicate"]) { #expect(m.contains("--frobnicate")) }
         else { Issue.record("unknown flag should be usage") }
         if case .usage = CLIArguments.parse(["3000", "--timeout"]) {} else { Issue.record("missing value") }
         if case .usage = CLIArguments.parse(["3000", "--timeout", "soon"]) {} else { Issue.record("bad value") }
@@ -65,6 +65,20 @@ import Testing
             .appendingPathComponent("README.md")
         let text = try String(contentsOf: readme, encoding: .utf8)
         #expect(text.contains(CLIArguments.agentInstructions), "README's agent block must match `fwd agents` exactly")
+    }
+
+    @Test func usageErrorsKnowWhetherJSONWasAskedFor() {
+        // An agent passing --json must get JSON back even when it made a mistake.
+        #expect(CLIArguments.parse(["3000", "--json", "--timeout", "x"])
+                == .usage("--timeout needs a number of seconds, not \"x\"", json: true))
+        #expect(CLIArguments.parse(["--frobnicate", "--json"]) == .usage("unknown option --frobnicate (try fwd --help)", json: true))
+        #expect(CLIArguments.parse(["3000", "--timeout"]) == .usage("--timeout needs a number of seconds", json: false))
+    }
+
+    @Test func helpQuotesPortsTheShellWouldMangle() {
+        // Unquoted, -> is a redirect and ** a filename pattern.
+        #expect(CLIArguments.help.contains("\"3000->4000\""))
+        #expect(CLIArguments.help.contains("\"31**\""))
     }
 
     @Test func helpMentionsEveryCommandAndExitCode() {

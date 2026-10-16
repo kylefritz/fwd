@@ -69,6 +69,34 @@ import Testing
         #expect(raw.exitCode == .usage)
     }
 
+    @Test func aNewerProtocolGetsTheVersionMessageEvenIfItDoesntDecode() async throws {
+        let path = socketPath()
+        let s = try server(path) { _ in .success(hosts: []) }
+        defer { s.stop() }
+        let raw = try await Task.detached { () throws -> ControlReply in
+            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+            defer { close(fd) }
+            var a = try UnixSocket.address(path)
+            _ = withUnsafePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+            try UnixSocket.writeAll(fd, Data("{\"v\":2,\"command\":{\"name\":\"forward\"}}\n".utf8))
+            return try ControlReply.decode(try #require(try UnixSocket.readLine(fd, max: 1 << 20)))
+        }.value
+        #expect(raw.exitCode == .unreachable)
+        #expect(raw.error == ControlError.versionMismatch.message)
+    }
+
+    @Test func theClientOnlyTalksToItsOwnUsersServer() async throws {
+        let path = socketPath()
+        let s = try server(path) { _ in .success(hosts: []) }
+        defer { s.stop() }
+        // Our own server passes the owner check; a server run by another
+        // account (which tests can't create) would fail it.
+        let ok = try await Task.detached { try ControlClient.send(ControlRequest(cmd: "status"), to: path, timeout: 5) }.value
+        #expect(ok.ok)
+        #expect(UnixSocket.peerIsMe(-1) == false, "no peer, no trust")
+    }
+
     @Test func anOversizedRequestIsRefused() async throws {
         let path = socketPath()
         let s = try server(path) { _ in .success(hosts: []) }

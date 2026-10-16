@@ -54,9 +54,7 @@ public final class ControlServer: @unchecked Sendable {
     private func acceptOne() {
         let client = accept(listener, nil, nil)
         guard client >= 0 else { return }
-        var uid: uid_t = 0
-        var gid: gid_t = 0
-        guard getpeereid(client, &uid, &gid) == 0, uid == getuid() else {
+        guard UnixSocket.peerIsMe(client) else {
             close(client)
             return
         }
@@ -68,7 +66,15 @@ public final class ControlServer: @unchecked Sendable {
                     close(client)
                     return
                 }
-                request = .success(try ControlRequest.decode(line))
+                // The version first: a newer command's request may not
+                // decode as this version's at all.
+                struct Versioned: Decodable { let v: Int }
+                if let version = try? JSONDecoder().decode(Versioned.self, from: line),
+                   version.v != ControlRequest.version {
+                    request = .failure(.versionMismatch)
+                } else {
+                    request = .success(try ControlRequest.decode(line))
+                }
             } catch let error as ControlError {
                 request = .failure(error)
             } catch {
