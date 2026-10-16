@@ -21,6 +21,16 @@ func tempPaths() -> Paths {
         #expect(text.contains("3*** -> 4***"))
     }
 
+    @Test func keepConnectedIsSavedOnlyWhenSet() throws {
+        let store = Store(paths: tempPaths())
+        let file = PortsFile(hosts: ["vdesk": [Entry(port: "8765", keep: true), Entry(port: "8080")]])
+        try store.savePorts(file)
+        #expect(try store.loadPorts() == file)
+        let text = try String(contentsOf: store.paths.portsFile, encoding: .utf8)
+        #expect(text.components(separatedBy: "keep").count == 2, "only the kept entry writes the key")
+        #expect(try Store.decodePorts("hosts:\n  vdesk:\n  - port: 8765\n").hosts["vdesk"]?.first?.keep == false)
+    }
+
     @Test func missingAndEmptyFilesAreEmpty() throws {
         let store = Store(paths: tempPaths())
         #expect(try store.loadPorts() == PortsFile())

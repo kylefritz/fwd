@@ -16,15 +16,18 @@ import Testing
             paths.sshConfigOverride = config
             let box = Box()
             model = AppModel(paths: paths, power: FakePower(),
-                             timing: Timing(retrySchedule: [0.05], steadyRetry: 0.1, scanInterval: 0.05, settle: 0.01),
+                             timing: Timing(retrySchedule: [0.05], steadyRetry: 0.1, scanInterval: 0.05, settle: 0.01,
+                                            screenSharingIdle: 0.3, screenSharingUnused: 0.6),
                              makeConnection: { host in
                                  let c = FakeConnection()
                                  c.listening = box.listening
                                  box.made[host, default: []].append(c)
                                  return c
                              },
-                             // These tests are about the model, not this machine's ports.
-                             isPortFree: { _ in true })
+                             // These tests are about the model, not this machine's ports or ssh sessions.
+                             isPortFree: { _ in true },
+                             userSessions: { box.sessions },
+                             busyPorts: { _ in box.busy })
             self.box = box
         }
 
@@ -32,6 +35,10 @@ import Testing
             var made: [String: [FakeConnection]] = [:]
             /// What new connections report from the remote scan.
             var listening = "#fwd:ss\n"
+            /// Hosts you have your own ssh session to.
+            var sessions: Set<String> = []
+            /// Laptop ports with a connection open through them.
+            var busy: Set<Int> = []
         }
         let box: Box
 
@@ -111,11 +118,85 @@ import Testing
         await rig.model.shutdown()
     }
 
-    @Test func handEditsApplyOnTheNextTick() async throws {
+    @Test func aHandEditedPortWaitsForASessionAndYourSessionBringsItUp() async throws {
         let rig = try Rig()
         await rig.model.start(runTimer: false)
         try FileManager.default.createDirectory(at: rig.model.paths.configDir, withIntermediateDirectories: true)
         try "hosts:\n  staging:\n    - port: 5173\n".write(to: rig.model.paths.portsFile, atomically: true, encoding: .utf8)
+        await rig.model.tick()
+        try await eventually("waiting") { rig.card("staging")?.state == .standby }
+        #expect(rig.box.made["staging"] == nil)
+        #expect(rig.model.overall == .idle)
+
+        rig.box.sessions = ["staging"]
+        await rig.model.refreshUserSessions()
+        try await eventually("up with your session") { rig.pill("staging", "5173")?.local == 5173 }
+
+        rig.box.sessions = []
+        await rig.model.refreshUserSessions()
+        try await eventually("down when your session ends") { rig.card("staging")?.state == .standby }
+        #expect(rig.box.made["staging"]?.count == 1)
+        await rig.model.shutdown()
+    }
+
+    @Test func keepConnectedIsSavedAndUncheckingItDoesNotDropAHostInUse() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        try await rig.model.add(host: "devbox", text: "8765 lanes")
+        try await rig.model.setKeep(host: "devbox", text: "8765", keep: true)
+        #expect(rig.pill("devbox", "8765")?.keep == true)
+        #expect(rig.portsText.contains("keep: true"))
+        try await eventually("up") { rig.pill("devbox", "8765")?.local == 8765 }
+        rig.box.made["devbox"]?.last?.die()
+        try await eventually("kept: reconnects") { rig.box.made["devbox"]?.count == 2 && rig.card("devbox")?.state == .connected }
+
+        try await rig.model.setKeep(host: "devbox", text: "8765", keep: false)
+        #expect(!rig.portsText.contains("keep"))
+        #expect(rig.card("devbox")?.state == .connected)
+        await rig.model.shutdown()
+    }
+
+    @Test func screenSharingTurnsItselfOffOnceTheViewerLeaves() async throws {
+        let rig = try Rig()
+        rig.box.listening = "#fwd:ss\nLISTEN 0 1 127.0.0.1:5900 0.0.0.0:*\n"
+        await rig.model.start(runTimer: false)
+        _ = try await rig.model.screenSharingURL(host: "devbox", timeout: 5)
+        #expect(rig.pill("devbox", "5900 -> 5901")?.on == true)
+
+        // In use: stays on.
+        rig.box.busy = [5901]
+        try await Task.sleep(nanoseconds: 400_000_000)
+        await rig.model.checkScreenSharing()
+        #expect(rig.pill("devbox", "5900 -> 5901")?.on == true)
+
+        // Viewer closed: off after the idle time, and the host disconnects.
+        rig.box.busy = []
+        await rig.model.checkScreenSharing()
+        try await Task.sleep(nanoseconds: 400_000_000)
+        await rig.model.checkScreenSharing()
+        #expect(rig.pill("devbox", "5900 -> 5901")?.on == false)
+        #expect(rig.card("devbox")?.state == .idle)
+        await rig.model.shutdown()
+    }
+
+    @Test func screenSharingNobodyOpenedTurnsOffToo() async throws {
+        let rig = try Rig()
+        rig.box.listening = "#fwd:ss\nLISTEN 0 1 127.0.0.1:5900 0.0.0.0:*\n"
+        await rig.model.start(runTimer: false)
+        _ = try await rig.model.screenSharingURL(host: "devbox", timeout: 5)
+        await rig.model.checkScreenSharing()
+        #expect(rig.pill("devbox", "5900 -> 5901")?.on == true, "give the viewer time to open")
+        try await Task.sleep(nanoseconds: 700_000_000)
+        await rig.model.checkScreenSharing()
+        #expect(rig.pill("devbox", "5900 -> 5901")?.on == false)
+        await rig.model.shutdown()
+    }
+
+    @Test func handEditsApplyOnTheNextTick() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        try FileManager.default.createDirectory(at: rig.model.paths.configDir, withIntermediateDirectories: true)
+        try "hosts:\n  staging:\n    - port: 5173\n      keep: true\n".write(to: rig.model.paths.portsFile, atomically: true, encoding: .utf8)
         await rig.model.tick()
         try await eventually("picked up") { rig.pill("staging", "5173")?.local == 5173 }
         await rig.model.shutdown()

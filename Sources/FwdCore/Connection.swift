@@ -223,11 +223,16 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             "Permission denied (", "Host key verification failed",
             "REMOTE HOST IDENTIFICATION HAS CHANGED", "Too many authentication failures",
             "No more authentication methods", "sign_and_send_pubkey",
-            "open the following URL and log in",
             "Bad configuration option", "Bad owner or permissions",
         ]
-        let message = stderr.isEmpty ? "ssh exited without a message" : lastLine(stderr)
+        // A sign-in proxy that opened a browser. ssh then usually times out,
+        // which would otherwise read as "try again" and open another tab.
+        let browserSignIn = ["open the following URL and log in", "should have opened at the following URL"]
         let lowered = stderr.lowercased()
+        if browserSignIn.contains(where: { lowered.contains($0.lowercased()) }) {
+            return .needsAttention("This host wants you to sign in in a browser. Open in Terminal to sign in, then Retry.")
+        }
+        let message = stderr.isEmpty ? "ssh exited without a message" : lastLine(stderr)
         if needsHuman.contains(where: { lowered.contains($0.lowercased()) }) {
             return .needsAttention(message)
         }

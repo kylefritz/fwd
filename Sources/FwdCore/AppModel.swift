@@ -40,6 +40,8 @@ public struct Pill: Identifiable, Equatable, Sendable {
     /// The remote port of a single-port entry.
     public let remote: Int?
     public let name: String?
+    /// Keeps the host connected while on.
+    public let keep: Bool
     public var id: String { text }
     public var openURL: URL? {
         guard let remote, let local else { return nil }
@@ -103,6 +105,19 @@ public final class AppModel: ObservableObject {
     private let timing: Timing
     private let makeConnection: (String) -> Connection
     private let cleansLeftovers: Bool
+    private let userSessions: () async -> Set<String>
+    private let busyPorts: (Int32) async -> Set<Int>
+
+    /// Hosts you have your own ssh session to, from the last look.
+    private var openSessions: Set<String> = []
+
+    struct ScreenSharingUse {
+        let port: String
+        let started: Date
+        var lastUsed: Date?
+    }
+    /// Screen Sharing entries the button turned on, by host.
+    private var screenSharing: [String: ScreenSharingUse] = [:]
 
     private var file = PortsFile()
     private var sessions: [String: HostSession] = [:]
@@ -121,8 +136,12 @@ public final class AppModel: ObservableObject {
 
     public init(paths: Paths = .fromEnvironment(), power: PowerEvents, timing: Timing = Timing(),
                 log: Log? = nil, makeConnection: ((String) -> Connection)? = nil,
-                isPortFree: @escaping (Int) -> Bool = PortAllocator.systemIsFree) {
+                isPortFree: @escaping (Int) -> Bool = PortAllocator.systemIsFree,
+                userSessions: (() async -> Set<String>)? = nil,
+                busyPorts: @escaping (Int32) async -> Set<Int> = TrafficSampler.busyPorts) {
         self.paths = paths
+        self.userSessions = userSessions ?? { await UserSessions.current(paths: paths) }
+        self.busyPorts = busyPorts
         self.power = power
         self.timing = timing
         let log = log ?? Log(file: paths.logFile)
@@ -148,6 +167,7 @@ public final class AppModel: ObservableObject {
             Task { @MainActor in await self?.handle(event) }
         }
         reloadSSHConfig()
+        openSessions = await userSessions()
         await reloadPorts(initial: true)
         if runTimer {
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -184,7 +204,15 @@ public final class AppModel: ObservableObject {
         ticks += 1
         if store.portsModified() != portsStamp { await reloadPorts(initial: false) }
         reloadSSHConfigIfChanged()
+        if ticks % 2 == 0 { await refreshUserSessions() }
+        if ticks % 5 == 0, !screenSharing.isEmpty { await checkScreenSharing() }
         if visible, ticks % 3 == 0 { await refreshLiveStatus() }
+    }
+
+    /// Looks for your own ssh sessions and tells each host whether it has one.
+    func refreshUserSessions() async {
+        openSessions = await userSessions()
+        for (host, session) in sessions { await session.setUserSession(openSessions.contains(host)) }
     }
 
     // MARK: Files
@@ -275,6 +303,7 @@ public final class AppModel: ObservableObject {
             entries.append(Entry(port: pattern.text, on: true, name: name))
         }
         try await update(host: host, entries: entries)
+        await sessions[host]?.connect()
     }
 
     /// Sets or clears (with an empty string) an entry's name.
@@ -291,8 +320,26 @@ public final class AppModel: ObservableObject {
         var entries = file.hosts[host] ?? []
         guard let index = entries.firstIndex(where: { $0.port == text }) else { return }
         entries[index].on.toggle()
-        if !entries[index].on { forget(host: host, text: text) }
+        let turnedOn = entries[index].on
+        if !turnedOn {
+            forget(host: host, text: text)
+            if entries[index].port == screenSharing[host]?.port { screenSharing[host] = nil }
+        }
         try await update(host: host, entries: entries)
+        if turnedOn { await sessions[host]?.connect() }
+    }
+
+    /// Marks an entry keep connected, or not. Turning it off counts as a
+    /// click, so a host in use doesn't drop the moment you uncheck it.
+    public func setKeep(host: String, text: String, keep: Bool) async throws {
+        await syncFromDisk()
+        var entries = file.hosts[host] ?? []
+        guard let index = entries.firstIndex(where: { $0.port == text }) else { return }
+        entries[index].keep = keep
+        if keep, entries[index].port == screenSharing[host]?.port { screenSharing[host] = nil }
+        let wasConnected = sessions[host]?.state == .connected
+        try await update(host: host, entries: entries)
+        if !keep, wasConnected { await sessions[host]?.connect() }
     }
 
     public func remove(host: String, text: String) async throws {
@@ -312,10 +359,14 @@ public final class AppModel: ObservableObject {
         await syncFromDisk()
         guard fileError == nil else { throw AppModelError.portsFileBroken }
         for (host, entries) in file.hosts {
-            file.hosts[host] = entries.map { Entry(port: $0.port, on: false, name: $0.name) }
+            var off = entries
+            for i in off.indices { off[i].on = false }
+            file.hosts[host] = off
             allocator.forget(keyPrefix: "\(host)|")
         }
         try save()
+        log.write("turned all off")
+        screenSharing = [:]
         await apply()
     }
 
@@ -323,15 +374,18 @@ public final class AppModel: ObservableObject {
     /// turning on its entry, and returns the `vnc://` URL once it's up.
     public func screenSharingURL(host: String, timeout: Double = 30) async throws -> URL {
         await syncFromDisk()
-        let existing = (file.hosts[host] ?? []).first {
-            guard let pattern = try? PortPattern.parse($0.port) else { return false }
-            return !pattern.isWildcard && pattern.remoteRange.lowerBound == ScreenSharing.remotePort
+        func vncEntry() -> Entry? {
+            (file.hosts[host] ?? []).first {
+                guard let pattern = try? PortPattern.parse($0.port) else { return false }
+                return !pattern.isWildcard && pattern.remoteRange.lowerBound == ScreenSharing.remotePort
+            }
         }
-        if let existing {
+        if let existing = vncEntry() {
             if !existing.on { try await toggle(host: host, text: existing.port) }
         } else {
             try await add(host: host, text: "\(ScreenSharing.entryText) \(ScreenSharing.entryName)")
         }
+        await sessions[host]?.connect()
         let user = await ScreenSharing.user(host: host, paths: paths)
         let remote = ScreenSharing.remotePort
         let deadline = Date().addingTimeInterval(timeout)
@@ -348,6 +402,9 @@ public final class AppModel: ObservableObject {
                         throw ScreenSharingError.notSharing(host)
                     }
                     log.write("opening Screen Sharing on localhost:\(forward.local)", host: host)
+                    if let entry = vncEntry(), !entry.keep {
+                        screenSharing[host] = ScreenSharingUse(port: entry.port, started: Date())
+                    }
                     return ScreenSharing.url(local: forward.local, user: user)
                 }
             }
@@ -356,8 +413,38 @@ public final class AppModel: ObservableObject {
         throw ScreenSharingError.timedOut(host)
     }
 
-    public func retry(host: String) async {
-        await sessions[host]?.retryNow()
+    /// The Retry and Connect buttons.
+    public func connect(host: String) async {
+        await sessions[host]?.connect()
+    }
+
+    /// Turns a Screen Sharing entry the button turned on back off once the
+    /// viewer has gone: no connection through it for a while after one was
+    /// seen, or none at all for longer. A kept entry is left alone.
+    func checkScreenSharing() async {
+        let now = Date()
+        for (host, use) in screenSharing {
+            var use = use
+            let session = sessions[host]
+            if let session, session.state == .connected, let pid = session.masterPID,
+               let forward = session.active[ScreenSharing.remotePort],
+               await busyPorts(pid).contains(forward.local) {
+                use.lastUsed = now
+            }
+            let idleFor = now.timeIntervalSince(use.lastUsed ?? use.started)
+            let limit = use.lastUsed == nil ? timing.screenSharingUnused : timing.screenSharingIdle
+            guard screenSharing[host] != nil else { continue }
+            guard idleFor >= limit else {
+                screenSharing[host] = use
+                continue
+            }
+            screenSharing[host] = nil
+            guard var entries = file.hosts[host],
+                  let index = entries.firstIndex(where: { $0.port == use.port && $0.on && !$0.keep }) else { continue }
+            log.write("Screen Sharing not in use; turning \(use.port) off", host: host)
+            entries[index].on = false
+            try? await update(host: host, entries: entries)
+        }
     }
 
     private func forget(host: String, text: String) {
@@ -380,7 +467,8 @@ public final class AppModel: ObservableObject {
             file = previous
             throw error
         }
-        log.write("entries now: \(entries.map { "\($0.port)\($0.on ? "" : " (off)")" }.joined(separator: ", "))", host: host)
+        let described = entries.map { "\($0.port)\($0.on ? "" : " (off)")\($0.keep ? " (keep)" : "")" }
+        log.write("entries now: \(described.joined(separator: ", "))", host: host)
         await apply()
     }
 
@@ -390,7 +478,9 @@ public final class AppModel: ObservableObject {
         // so read the current entries at every step instead of a snapshot.
         for host in Array(file.hosts.keys) {
             guard let entries = file.hosts[host] else { continue }
-            await session(for: host).setEntries(entries)
+            let session = session(for: host)
+            await session.setUserSession(openSessions.contains(host))
+            await session.setEntries(entries)
         }
         for (host, session) in sessions where file.hosts[host] == nil {
             guard file.hosts[host] == nil else { continue }
@@ -497,6 +587,7 @@ public final class AppModel: ObservableObject {
     private func statusLine(_ state: HostState, session: HostSession?) -> String {
         switch state {
         case .idle: return ""
+        case .standby: return "Not connected · starts when you ssh in"
         case .connecting: return "Connecting…"
         case .connected:
             let count = session?.active.count ?? 0
@@ -518,7 +609,7 @@ public final class AppModel: ObservableObject {
         func make(_ state: PillState, wildcard: Bool = false, local: Int? = nil, label: String? = nil,
                   moved: Bool = false, ports: [PillPort] = []) -> Pill {
             Pill(text: entry.port, on: entry.on, state: state, isWildcard: wildcard, local: local,
-                 label: label ?? entry.port, moved: moved, ports: ports, remote: remote, name: entry.name)
+                 label: label ?? entry.port, moved: moved, ports: ports, remote: remote, name: entry.name, keep: entry.keep)
         }
         let pattern: PortPattern
         do {

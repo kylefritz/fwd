@@ -221,15 +221,38 @@ Forwards always bind `127.0.0.1` on the laptop, never other interfaces.
 
 ## Connection lifecycle
 
-Per-host states: idle (nothing enabled), connecting, connected, retrying,
-paused (asleep or no network), needs attention.
+Per-host states: idle (nothing enabled), standby (ports on, nothing asking
+for a connection), connecting, connected, retrying, paused (asleep or no
+network), needs attention.
 
-- A host connects when its first entry is enabled and disconnects when the
-  last one is turned off.
+fwd never holds a connection open just because a port is on. A host with
+enabled entries connects only for one of these reasons:
+
+- **Your ssh session.** Every 2 seconds fwd reads `ps` for `ssh` processes
+  and takes the destination from each command line (skipping option values,
+  `user@` and `ssh://`). `-G`, `-O`, `-Q`, `-V` and `-W` (ProxyJump's hop) are
+  not sessions, and fwd's own processes are recognized by its socket
+  directory. The host connects when your session appears, reconnects while it
+  lasts, and disconnects when your last session to it ends.
+- **Keep connected.** An enabled entry with `keep: true` keeps its host
+  connected with no session, reconnecting after drops, sleep and network
+  changes. Set from the pill's menu, with a pin on the pill.
+- **A click.** Turning a port on, Screen Sharing, Connect or Retry connects
+  once: the first attempt gets the short schedule (2s, 5s, 15s, 30s) and then
+  gives up to standby. After it connects, a drop, sleep or network loss ends
+  it; the host goes to standby rather than reconnecting. Unchecking Keep
+  connected on a connected host counts as a click, so it doesn't drop mid-use.
+
+In standby the card says "Not connected · starts when you ssh in" with a
+Connect button.
+
+- A host disconnects when the last entry is turned off, or when its last
+  reason to connect goes away.
 - A dead link is noticed within roughly 10 to 15 seconds via the keepalive
-  options; the master exits and the host moves to retrying.
+  options; the master exits and the host moves to retrying (or standby, if
+  only a click connected it).
 - Retry schedule while awake with a network path: 2s, 5s, 15s, 30s, then every
-  60s indefinitely.
+  60s for as long as your session lasts or the entry is kept.
 - No network path: no polling. The host is paused until `NWPathMonitor`
   reports a usable path.
 - Lid closed and asleep: the process is suspended by macOS, so nothing runs.
@@ -238,8 +261,15 @@ paused (asleep or no network), needs attention.
   is closed and the link is down, the retry loop skips straight to the 60s
   interval.
 - On wake, or when the network path returns: after a 1 second settle, each
-  enabled host runs `-O check`, kills a stale master if the check fails, and
-  reconnects immediately with the retry schedule reset.
+  host with your session or a kept entry runs `-O check`, kills a stale master
+  if the check fails, and reconnects immediately with the retry schedule
+  reset. Other hosts go to standby.
+- Screen Sharing turned on by the button turns itself off again: once a
+  viewer has connected through the forward and then none has for 30 seconds,
+  or if none connects within 2 minutes. A kept Screen Sharing entry stays on.
+- A sign-in proxy that opens a browser (cloudflared's "A browser window
+  should have opened at the following URL") is "needs attention" even though
+  ssh then reports a timeout, so retries never open more browser tabs.
 - Authentication never prompts (`BatchMode=yes`). Anything that needs a human
   puts the host in "needs attention" and stops retrying: a key not loaded in
   the agent, a password-only host, an unknown or changed host key, an expired

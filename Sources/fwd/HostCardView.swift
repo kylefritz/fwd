@@ -22,6 +22,7 @@ struct StateStyle {
     static func host(_ state: HostState) -> StateStyle {
         switch state {
         case .idle: return StateStyle(symbol: "circle.dashed", color: .secondary, words: "idle")
+        case .standby: return StateStyle(symbol: "circle.dashed", color: .secondary, words: "not connected")
         case .connecting: return StateStyle(symbol: "ellipsis.circle", color: .secondary, words: "connecting")
         case .connected: return StateStyle(symbol: "checkmark.circle.fill", color: .green, words: "connected")
         case .retrying: return StateStyle(symbol: "arrow.triangle.2.circlepath", color: .orange, words: "reconnecting")
@@ -91,6 +92,11 @@ struct HostCardView: View {
                 Text("not in ssh config").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            if card.state == .standby {
+                Button("Connect") { Task { await model.connect(host: card.name) } }
+                    .buttonStyle(.link).font(.caption)
+                    .help("Connect now. fwd won't reconnect by itself if the link drops, unless you're ssh'd into \(card.name) or a port is set to Keep connected.")
+            }
             if card.inConfig { ScreenSharingButton(host: card.name, model: model, app: app, report: report) }
             if !card.pills.isEmpty {
                 Button("Clear all") {
@@ -107,7 +113,7 @@ struct HostCardView: View {
             Text(card.statusLine).font(.caption).foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             HStack {
-                Button("Retry") { Task { await model.retry(host: card.name) } }
+                Button("Retry") { Task { await model.connect(host: card.name) } }
                 Button("Open in Terminal") { app.openInTerminal(host: card.name) }
                     .help("Runs ssh \(card.name) so you can answer whatever ssh is asking for")
             }
@@ -206,6 +212,11 @@ struct PillView: View {
                         }
                         Text(verbatim: pill.label.replacingOccurrences(of: "->", with: "→")).font(pill.name == nil ? .callout.monospacedDigit() : .caption.monospacedDigit())
                             .foregroundStyle(pill.on && pill.name == nil ? .primary : .secondary)
+                        if pill.keep {
+                            Image(systemName: "pin.fill").font(.caption2).foregroundStyle(.secondary)
+                                .help(PillView.keepHelp)
+                                .accessibilityLabel("keep connected")
+                        }
                         if pill.moved {
                             Image(systemName: "arrow.turn.down.right").font(.caption2).foregroundStyle(.orange)
                                 .accessibilityLabel("moved to a nearby port")
@@ -284,6 +295,8 @@ struct PillView: View {
         }
         .contextMenu {
             Button(pill.on ? "Turn off" : "Turn on", action: toggle)
+            Toggle("Keep connected", isOn: Binding(get: { pill.keep }, set: setKeep))
+                .help(PillView.keepHelp)
             Button("Rename…") {
                 draftName = pill.name ?? ""
                 renaming = true
@@ -307,11 +320,22 @@ struct PillView: View {
         if pill.moved, let local = pill.local {
             text += ". The laptop port you asked for was taken, so this is on \(local)."
         }
+        if pill.keep { text += ". Kept connected." }
         return text + (pill.on ? " Click to turn off." : " Click to turn on.")
     }
 
+    static let keepHelp = """
+        Keep connected: while this port is on, fwd keeps the host connected and reconnects \
+        after drops, sleep and network changes, even with no ssh session open. Without it, \
+        fwd connects only while you're ssh'd into the host, or once when you click.
+        """
+
     private func toggle() {
         Task { do { try await model.toggle(host: host, text: pill.text) } catch { report(error) } }
+    }
+
+    private func setKeep(_ keep: Bool) {
+        Task { do { try await model.setKeep(host: host, text: pill.text, keep: keep) } catch { report(error) } }
     }
 
     private func saveName() {

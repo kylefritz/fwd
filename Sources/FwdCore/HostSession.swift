@@ -3,6 +3,9 @@ import Foundation
 public enum HostState: Equatable, Sendable {
     /// Nothing enabled, so no connection.
     case idle
+    /// Ports are on but nothing asks for a connection: no ssh session of
+    /// yours, no keep-connected entry, no recent click.
+    case standby
     case connecting
     case connected
     /// Link is down; another attempt is scheduled.
@@ -19,18 +22,27 @@ public struct Timing: Sendable {
     public var steadyRetry: Double
     public var scanInterval: Double
     public var settle: Double
+    /// How long a Screen Sharing forward the button opened stays on with no
+    /// viewer: after one has been seen, and if none ever connects.
+    public var screenSharingIdle: Double
+    public var screenSharingUnused: Double
 
     public init(retrySchedule: [Double] = [2, 5, 15, 30], steadyRetry: Double = 60,
-                scanInterval: Double = 5, settle: Double = 1) {
+                scanInterval: Double = 5, settle: Double = 1,
+                screenSharingIdle: Double = 30, screenSharingUnused: Double = 120) {
         self.retrySchedule = retrySchedule
         self.steadyRetry = steadyRetry
         self.scanInterval = scanInterval
         self.settle = settle
+        self.screenSharingIdle = screenSharingIdle
+        self.screenSharingUnused = screenSharingUnused
     }
 }
 
-/// Keeps one host's forwards matching its entries: connects when something
-/// is enabled, rescans, reconciles, and reconnects after any drop.
+/// Keeps one host's forwards matching its entries while something asks for
+/// a connection: your own ssh session to the host, an entry marked keep
+/// connected, or a click. Only the first two reconnect after a drop, sleep
+/// or network change; a click connects once.
 @MainActor
 public final class HostSession {
     public let host: String
@@ -62,6 +74,11 @@ public final class HostSession {
     private var asleep = false
     private var linkAlive = false
     private var running = false
+    /// You have your own ssh session to this host open.
+    private var userSession = false
+    /// You clicked something that connects. Lasts until the link drops, a
+    /// first attempt gives up, or the laptop sleeps.
+    private var clicked = false
 
     public init(host: String, makeConnection: @escaping () -> Connection, allocator: PortAllocator,
                 power: PowerEvents, timing: Timing = Timing(), log: Log) {
@@ -77,7 +94,14 @@ public final class HostSession {
         entries.filter(\.on).compactMap { try? PortPattern.parse($0.port) }
     }
 
-    private var wantsConnection: Bool { !patterns.isEmpty }
+    private var keeps: Bool {
+        entries.contains { $0.on && $0.keep && (try? PortPattern.parse($0.port)) != nil }
+    }
+
+    /// Reasons that survive a drop, so the session reconnects on its own.
+    private var reconnects: Bool { keeps || userSession }
+
+    private var wantsConnection: Bool { !patterns.isEmpty && (reconnects || clicked) }
 
     public static func stickyKey(host: String, entry: String, remote: Int) -> String {
         "\(host)|\(entry)|\(remote)"
@@ -88,17 +112,55 @@ public final class HostSession {
     public func setEntries(_ new: [Entry]) async {
         guard new != entries else { return }
         entries = new
-        if !wantsConnection {
+        await settle()
+    }
+
+    /// Whether you have your own ssh session to this host open right now.
+    public func setUserSession(_ open: Bool) async {
+        guard open != userSession else { return }
+        userSession = open
+        if !patterns.isEmpty {
+            log.write(open ? "your ssh session opened" : "your ssh session closed", host: host)
+        }
+        await settle()
+    }
+
+    /// Connects now because you clicked: turned a port on, Screen Sharing,
+    /// Connect or Retry. Leaves a working connection alone.
+    public func connect() async {
+        guard !patterns.isEmpty else { return }
+        clicked = true
+        if running, state == .connected || state == .connecting || state == .retrying { return }
+        log.write("connecting (clicked)", host: host)
+        await halt()
+        start()
+    }
+
+    /// Starts or stops the connection to match the entries and the reasons
+    /// to be connected.
+    private func settle() async {
+        if patterns.isEmpty {
+            clicked = false
             if running || state != .idle {
                 await halt()
                 set(.idle)
             } else {
                 changed()
             }
+        } else if !wantsConnection {
+            if running {
+                log.write("nothing asks for a connection now; disconnecting", host: host)
+                await halt()
+            }
+            if case .needsAttention = state { return changed() }
+            set(.standby)
         } else if !running {
             if case .needsAttention = state {
                 changed()
+            } else if asleep {
+                set(.paused("asleep"))
             } else {
+                log.write("connecting (\(keeps ? "keep connected" : "your ssh session"))", host: host)
                 start()
             }
         } else {
@@ -111,12 +173,15 @@ public final class HostSession {
         switch event {
         case .willSleep:
             asleep = true
-            guard wantsConnection else { return }
+            // A click connects once; sleeping ends it.
+            clicked = false
+            guard !patterns.isEmpty, running || state != .standby else { return }
             log.write("sleeping; pausing", host: host)
             await halt()
             set(.paused("asleep"))
         case .networkDown:
             guard wantsConnection, !asleep else { return }
+            clicked = false
             log.write("network lost; pausing", host: host)
             await halt()
             set(.paused("no network"))
@@ -129,13 +194,6 @@ public final class HostSession {
         }
     }
 
-    /// Tries again right now. Used by the Retry button.
-    public func retryNow() async {
-        guard wantsConnection else { return }
-        await halt()
-        start()
-    }
-
     public func shutdown() async {
         await halt()
         set(.idle)
@@ -144,8 +202,13 @@ public final class HostSession {
     // MARK: Lifecycle
 
     private func resume() async {
-        guard wantsConnection, !asleep, power.networkUp else { return }
+        guard !patterns.isEmpty, !asleep, power.networkUp else { return }
         if case .needsAttention = state { return }
+        guard reconnects else {
+            // Paused by sleep or the network, and nothing asks to come back.
+            if case .paused = state { set(.standby) }
+            return
+        }
         if state == .connected, let connection, await connection.isAlive() { return }
         log.write("resuming", host: host)
         await halt()
@@ -155,6 +218,8 @@ public final class HostSession {
     private func start(after delay: Double = 0) {
         generation += 1
         running = true
+        // Right away, so nobody sees the old state while the task spins up.
+        set(.connecting)
         let gen = generation
         Task { await self.loop(gen, initialDelay: delay) }
     }
@@ -220,6 +285,11 @@ public final class HostSession {
                     set(.needsAttention(message))
                     return
                 }
+                if !reconnects, attempt >= timing.retrySchedule.count {
+                    log.write("connect failed (\(failure.message)); giving up until you ssh in or click Connect", host: host)
+                    stand()
+                    return
+                }
                 let delay = retryDelay(attempt)
                 log.write("connect failed (\(failure.message)); retrying in \(Int(delay))s", host: host)
                 set(.retrying)
@@ -254,12 +324,24 @@ public final class HostSession {
             connection = nil
             await conn.stop()
             guard gen == generation else { return }
+            guard reconnects else {
+                log.write("link down; not reconnecting (no ssh session of yours, nothing kept connected)", host: host)
+                stand()
+                return
+            }
             let delay = retryDelay(0)
             log.write("link down; retrying in \(Int(delay))s", host: host)
             set(.retrying)
             await nap(delay)
             attempt = 1
         }
+    }
+
+    /// Stops the loop and waits for a reason to connect again.
+    private func stand() {
+        clicked = false
+        running = false
+        set(.standby)
     }
 
     private func linkDied(_ gen: Int) {

@@ -7,11 +7,27 @@ public struct Entry: Codable, Equatable, Sendable {
     public var on: Bool
     /// A short alias shown on the pill, such as `api` or `vnc`.
     public var name: String?
+    /// Keep the host connected while this entry is on, reconnecting after
+    /// drops, sleep and network changes. Without it fwd only connects while
+    /// you have an ssh session to the host, or for a moment after a click.
+    public var keep: Bool
 
-    public init(port: String, on: Bool = true, name: String? = nil) {
+    enum CodingKeys: String, CodingKey { case port, on, name, keep }
+
+    public init(port: String, on: Bool = true, name: String? = nil, keep: Bool = false) {
         self.port = port
         self.on = on
         self.name = name
+        self.keep = keep
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(port, forKey: .port)
+        try c.encode(on, forKey: .on)
+        try c.encodeIfPresent(name, forKey: .name)
+        // Left out when false, so existing files don't change.
+        if keep { try c.encode(true, forKey: .keep) }
     }
 
     public init(from decoder: Decoder) throws {
@@ -24,6 +40,7 @@ public struct Entry: Codable, Equatable, Sendable {
         }
         on = try c.decodeIfPresent(Bool.self, forKey: .on) ?? true
         name = EntryName.clean(try c.decodeIfPresent(String.self, forKey: .name) ?? "")
+        keep = try c.decodeIfPresent(Bool.self, forKey: .keep) ?? false
     }
 }
 

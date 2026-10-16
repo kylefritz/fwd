@@ -25,7 +25,7 @@ import Testing
         let laptop = try freePort()
         let s = makeSession(server)
 
-        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)")])
+        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)", keep: true)])
         try await eventually("forward up") { s.active[remote.port]?.local == laptop }
         #expect(fetch(laptop) == "from the remote")
         #expect(s.listening?.contains(remote.port) == true, "scan should see the remote listener")
@@ -42,7 +42,7 @@ import Testing
         let remote = try TestListener()
         let laptop = try freePort()
         let s = makeSession(server)
-        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)")])
+        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)", keep: true)])
         try await eventually("forward up") { s.active.count == 1 }
         #expect(fetch(laptop) == "hello")
         // Several scans have run through the control socket by now.
@@ -57,7 +57,7 @@ import Testing
         defer { server.cleanup() }
         let base = try freeBlockOfTen(shift: 100)
         let s = makeSession(server)
-        await s.setEntries([Entry(port: "\(base / 10)* -> \((base + 100) / 10)*")])
+        await s.setEntries([Entry(port: "\(base / 10)* -> \((base + 100) / 10)*", keep: true)])
         try await eventually("connected") { s.state == .connected }
         #expect(s.active.isEmpty)
 
@@ -87,7 +87,7 @@ import Testing
         let allocator = PortAllocator()
         let s = makeSession(server, allocator: allocator)
 
-        await s.setEntries([Entry(port: "\(remote.port) -> \(wanted)")])
+        await s.setEntries([Entry(port: "\(remote.port) -> \(wanted)", keep: true)])
         try await eventually("forward up on a nearby port") { s.active[remote.port] != nil }
         let chosen = try #require(s.active[remote.port]?.local)
         #expect(chosen > wanted && chosen < wanted + PortAllocator.searchSpan)
@@ -113,9 +113,9 @@ import Testing
         let allocator = PortAllocator()
         let a = makeSession(server, allocator: allocator)
         let b = makeSession(server, host: SSHTestServer.secondHost, allocator: allocator)
-        await a.setEntries([Entry(port: "\(one.port) -> \(laptop)")])
+        await a.setEntries([Entry(port: "\(one.port) -> \(laptop)", keep: true)])
         try await eventually("first up") { a.active[one.port]?.local == laptop }
-        await b.setEntries([Entry(port: "\(two.port) -> \(laptop)")])
+        await b.setEntries([Entry(port: "\(two.port) -> \(laptop)", keep: true)])
         try await eventually("second up") { b.active[two.port] != nil }
         let bumped = try #require(b.active[two.port]?.local)
         #expect(bumped != laptop)
@@ -131,7 +131,7 @@ import Testing
         let remote = try TestListener(greeting: "still here")
         let laptop = try freePort()
         let s = makeSession(server)
-        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)")])
+        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)", keep: true)])
         try await eventually("forward up") { s.active.count == 1 }
 
         server.stop()
@@ -151,7 +151,7 @@ import Testing
         let remote = try TestListener(greeting: "awake")
         let laptop = try freePort()
         let s = makeSession(server)
-        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)")])
+        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)", keep: true)])
         try await eventually("forward up") { s.active.count == 1 }
 
         await s.handle(.willSleep)
@@ -169,7 +169,7 @@ import Testing
         let server = try SSHTestServer()
         defer { server.cleanup() }
         let s = makeSession(server, host: SSHTestServer.badKeyHost)
-        await s.setEntries([Entry(port: "3000 -> \(try freePort())")])
+        await s.setEntries([Entry(port: "3000 -> \(try freePort())", keep: true)])
         try await eventually("needs attention") {
             if case .needsAttention = s.state { return true }
             return false
@@ -187,7 +187,7 @@ import Testing
         defer { server.cleanup() }
         server.stop()
         let s = makeSession(server)
-        await s.setEntries([Entry(port: "3000 -> \(try freePort())")])
+        await s.setEntries([Entry(port: "3000 -> \(try freePort())", keep: true)])
         try await eventually("retrying") { s.state == .retrying }
         try server.start()
         try await eventually("connects once the host is up") { s.state == .connected }
@@ -200,7 +200,7 @@ import Testing
         let remote = try TestListener(greeting: "stream", hangUp: false)
         let laptop = try freePort()
         let s = makeSession(server)
-        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)")])
+        await s.setEntries([Entry(port: "\(remote.port) -> \(laptop)", keep: true)])
         try await eventually("forward up") { s.active.count == 1 }
         let pid = try #require(s.masterPID)
         #expect(await TrafficSampler.busyPorts(masterPID: pid).contains(laptop) == false)

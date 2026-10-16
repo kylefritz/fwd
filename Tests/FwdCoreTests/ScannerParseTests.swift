@@ -79,6 +79,17 @@ import Testing
         #expect(!needsPerson("ssh: connect to host 10.0.0.1 port 22: Operation timed out"))
         #expect(!needsPerson("ssh: Could not resolve hostname devbox: nodename nor servname provided"))
         #expect(!needsPerson(""))
+        // cloudflared's wording; each retry would open another browser tab.
+        let cloudflared = """
+            A browser window should have opened at the following URL:
+            https://ssh.example.com/cdn-cgi/access/cli?aud=abc
+            If the browser failed to open, please visit the URL above directly in your browser.
+            Connection timed out during banner exchange
+            Connection to UNKNOWN port 65535 timed out
+            """
+        #expect(needsPerson(cloudflared))
+        #expect(SSHConnection.classify(stderr: cloudflared).message.contains("sign in"),
+                "the card should say why, not show the timeout")
         // A server banner mentioning these words must not stop retries.
         #expect(!needsPerson("Use your browser to read the policy. Enter your passphrase carefully.\nConnection timed out during banner exchange"))
     }
