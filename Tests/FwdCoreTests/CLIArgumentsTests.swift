@@ -8,8 +8,19 @@ import Testing
         return nil
     }
 
-    @Test func noArgumentsOpensTheWindowAndVersionIsUntouched() {
-        #expect(CLIArguments.parse([]) == .openWindow)
+    @Test func noArgumentsPrintsHelpAndOpenOpensTheWindow() {
+        // A bare fwd has no side effects: an agent trying it gets text, not a window.
+        #expect(CLIArguments.parse([]) == .help)
+        #expect(CLIArguments.parse(["open"]) == .openWindow)
+        #expect(CLIArguments.parse(["open", "--json"]) == .openWindow)
+        if case .usage(let m, _) = CLIArguments.parse(["open", "3000"]) {
+            #expect(m == "open takes no arguments; to forward on a host called open: fwd forward open 3000")
+        } else { Issue.record("open with arguments should be usage") }
+        #expect(CLIArguments.parse(["forward", "open", "3000"]) != .openWindow)
+        #expect(CLIArguments.help.contains("fwd open"))
+    }
+
+    @Test func versionIsUntouched() {
         #expect(CLIArguments.parse(["--version"]) == .version)
         #expect(CLIArguments.parse(["-v"]) == .version)
         #expect(CLIArguments.parse(["--help"]) == .help)

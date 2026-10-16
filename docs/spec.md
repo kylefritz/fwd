@@ -569,8 +569,10 @@ and prints its URL, and `status`, `wait`, `off`, `remove`, `keep`, `connect`
 and `screen` do what the panel does. Full design, including the JSON output
 and exit codes: `docs/superpowers/specs/2026-10-16-cli-design.md`.
 
-- `fwd` with no arguments opens the app's window, starting the app first if
-  it is not running; a second copy is never started. `fwd --version` prints
+- `fwd` with no arguments prints the help and touches nothing, so an agent
+  trying it gets text, not a window. `fwd open` opens the app's window,
+  starting the app first if it is not running; a second copy is never
+  started. `fwd --version` prints
   exactly the version (the release checks compare it with the tag), and
   `fwd --help` prints usage.
 - The command is a Swift binary built from `Sources/fwd-cli` and shipped in

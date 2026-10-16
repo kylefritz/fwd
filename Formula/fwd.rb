@@ -20,8 +20,8 @@ class Fwd < Formula
   def caveats
     <<~EOS
       Start fwd from a terminal with:
-        fwd
-      It lives in the menu bar. Ports are kept in ~/.config/fwd/ports.yaml.
+        fwd open
+      It lives in the menu bar. `fwd` alone lists the commands. Ports are kept in ~/.config/fwd/ports.yaml.
     EOS
   end
 

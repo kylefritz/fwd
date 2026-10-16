@@ -19,7 +19,8 @@ public enum CLIArguments {
     public static let commands = ["forward", "status", "wait", "off", "remove", "keep", "connect", "screen"]
 
     public static func parse(_ args: [String]) -> Invocation {
-        if args.isEmpty { return .openWindow }
+        // A bare fwd only explains itself, so trying it has no side effects.
+        if args.isEmpty { return .help }
         if args == ["--version"] || args == ["-v"] { return .version }
         if args.contains("--help") || args.contains("-h") { return .help }
         if args == ["agents"] { return .agents }
@@ -61,6 +62,12 @@ public enum CLIArguments {
             }
         }
         guard let first = words.first else { return usage("say what to do, like: fwd 3000 (try fwd --help)") }
+        if first == "open" {
+            guard words.count == 1 else {
+                return usage("open takes no arguments; to forward on a host called open: fwd forward open \(words[1])")
+            }
+            return .openWindow
+        }
         let isCommand = commands.contains(first)
         return .request(ControlRequest(cmd: isCommand ? first : "forward",
                                        args: isCommand ? Array(words.dropFirst()) : words,
@@ -72,7 +79,7 @@ public enum CLIArguments {
         fwd: SSH port forwarding for the macOS menu bar
 
         Usage:
-          fwd                                open the fwd window
+          fwd open                           open the fwd window
           fwd [host] <port>...               forward ports and print their local URLs
           fwd forward [host] <port>...       the same, spelled out
           fwd status [host] [--all]          hosts and ports with their live state

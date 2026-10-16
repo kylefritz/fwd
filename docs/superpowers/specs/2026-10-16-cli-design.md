@@ -27,7 +27,8 @@ reason why not, in a form it can parse.
 ## Commands
 
 ```
-fwd                                      open the window (unchanged)
+fwd                                      print the help
+fwd open                                 open the window
 fwd [forward] [host] <port>... [--keep] [--wait] [--timeout S] [--json]
 fwd status [host] [--all] [--json]
 fwd wait [host] <port> [--timeout S] [--json]
@@ -42,7 +43,11 @@ fwd --help
 
 ### Choosing the command
 
-- No arguments: open the window, as today.
+- No arguments: print the help. It has no side effects, so an agent trying
+  `fwd` gets text, not a window. (Changed after the first beta, where a bare
+  `fwd` opened the window.)
+- `open`: open the window. It takes no other arguments; a host called `open`
+  is reached as `fwd forward open 3000`.
 - `--version` / `-v`: print exactly the app's version (`0.1.0`, `dev`). The
   release and Homebrew checks compare this with the tag, so nothing else may
   be printed.

@@ -138,7 +138,7 @@ fwd 3000 5173 web --keep  # several ports, with a name, kept connected
 fwd wait 3000             # block until a server answers on devbox:3000
 fwd status                # hosts and ports with their live state
 fwd off 3000              # turn it off; fwd remove 3000 forgets it
-fwd                       # open the window
+fwd open                  # open the window
 ```
 
 #### Tell your agent about fwd

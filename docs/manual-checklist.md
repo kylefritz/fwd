@@ -26,7 +26,7 @@ Run these on a laptop with the built app and at least one real remote host.
 ## Installing and updating
 
 - [ ] "Launch at login" turns on, survives a logout, and turns off.
-- [ ] "Install terminal command" works, and `fwd` then opens the window.
+- [ ] "Install Terminal Command" works, and `fwd open` then opens the window.
 - [ ] Quit from the menu: no `ssh` processes for fwd remain
       (`pgrep -fl "/tmp/fwd-"` prints nothing).
 - [ ] From the previous release, "Check for updates" finds this one and
