@@ -45,7 +45,7 @@ enum FwdMark {
         return image
     }
 
-    /// The app icon at `pixels` square: white chevrons on a green-to-teal
+    /// The app icon at `pixels` square: white chevrons on a violet-to-purple
     /// rounded square, sized to macOS's icon grid.
     static func appIcon(pixels: Int) -> NSBitmapImageRep? {
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
@@ -69,8 +69,8 @@ enum FwdMark {
         cg.saveGState()
         cg.addPath(shape)
         cg.clip()
-        let colors = [NSColor(srgbRed: 0.20, green: 0.80, blue: 0.55, alpha: 1).cgColor,
-                      NSColor(srgbRed: 0.05, green: 0.50, blue: 0.62, alpha: 1).cgColor] as CFArray
+        let colors = [NSColor(srgbRed: 0.72, green: 0.52, blue: 1.00, alpha: 1).cgColor,
+                      NSColor(srgbRed: 0.42, green: 0.22, blue: 0.86, alpha: 1).cgColor] as CFArray
         if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0, 1]) {
             cg.drawLinearGradient(gradient, start: CGPoint(x: tile.minX, y: tile.maxY),
                                   end: CGPoint(x: tile.maxX, y: tile.minY), options: [])

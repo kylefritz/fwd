@@ -352,7 +352,7 @@ other order, fwd's entry is bumped to a nearby port as usual.
   code (`Sources/fwd/Icon.swift`) as a template image. Dimmed when idle, full
   when forwarding, a dot top-right for attention and bottom-right when an
   update is waiting.
-- App icon: the same chevrons in white on a green-to-teal rounded square,
+- App icon: the same chevrons in white on a violet-to-purple rounded square,
   rendered by the app itself (`fwd --write-iconset`) during `scripts/bundle.sh`.
 - Panel: one card per host. Each card has the host name, a one-line status, a
   port field (Enter adds) and the entry pills.
