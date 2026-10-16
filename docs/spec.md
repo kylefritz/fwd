@@ -365,8 +365,11 @@ other order, fwd's entry is bumped to a nearby port as usual.
   content: the host list is measured and the panel is exactly that tall, up to
   the screen's height, and scrolls only past that. (A bare ScrollView in a
   `MenuBarExtra` window has no height of its own and collapses.)
-- Per-host "Remove All Ports" removes every entry for that host, on or off,
-  and the laptop ports fwd remembered for them. Nothing on the remote changes.
+- Each host card has a ••• menu: "Open in Terminal" (runs `ssh <host>`, which
+  is also what makes fwd connect) and "Remove All Ports", which removes every
+  entry for that host, on or off, and the laptop ports fwd remembered for
+  them. Nothing on the remote changes. It lives in the menu so it takes two
+  clicks, and so the status line has room.
 - Screen Sharing: every host has a display button. One click adds (or turns
   on) the entry `5900 -> 5901` named `vnc`, waits for the forward, and opens
   `vnc://<ssh User>@localhost:<laptop port>` in macOS's built-in Screen

@@ -98,14 +98,34 @@ struct HostCardView: View {
                     .buttonStyle(.link).font(.caption)
                     .help("Connect now. fwd won't reconnect by itself if the link drops, unless you're ssh'd into \(card.name) or a port is set to Keep connected.")
             }
+            if card.inConfig || !card.pills.isEmpty { hostMenu }
+        }
+    }
+
+    /// Less common host actions, kept off the card so the status line has room
+    /// and removing every port takes more than one click.
+    private var hostMenu: some View {
+        Menu {
+            if card.inConfig {
+                Button("Open in Terminal") { app.openInTerminal(host: card.name) }
+                    .help("Runs ssh \(card.name). fwd connects while that session is open.")
+            }
             if !card.pills.isEmpty {
-                Button("Remove All Ports") {
+                Divider()
+                Button("Remove All Ports", role: .destructive) {
                     Task { do { try await model.clearAll(host: card.name) } catch { report(error) } }
                 }
-                .buttonStyle(.link).font(.caption)
                 .help("Remove every port from \(card.name), on or off. Nothing on the remote changes.")
             }
+        } label: {
+            Image(systemName: "ellipsis")
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(.secondary)
+        .help("More for \(card.name)")
+        .accessibilityLabel(Text(verbatim: "More for \(card.name)"))
     }
 
     private var attention: some View {
