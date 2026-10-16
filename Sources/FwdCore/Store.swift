@@ -23,7 +23,13 @@ public struct Entry: Codable, Equatable, Sendable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(port, forKey: .port)
+        // A single port as a number: as text, YAML would quote it ('8765')
+        // to keep it text, which reads oddly in a file people edit.
+        if let number = Int(port) {
+            try c.encode(number, forKey: .port)
+        } else {
+            try c.encode(port, forKey: .port)
+        }
         try c.encode(on, forKey: .on)
         try c.encodeIfPresent(name, forKey: .name)
         // Left out when false, so existing files don't change.
