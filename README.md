@@ -1,57 +1,85 @@
-# fwd: SSH port forwarding for the macOS menu bar
+<div align="center">
 
-fwd keeps remote ports reachable on your Mac's `localhost`. Pick a host from
-your `~/.ssh/config`, type `3000`, and `http://localhost:3000` reaches port
-3000 on that machine. Close the lid, walk away, come back: the forwards are
-re-established without you touching anything.
+<img src="docs/icon.png" width="112" alt="fwd app icon">
 
-![The fwd window: three hosts with forwarded ports](docs/screenshot.png)
+# fwd
 
-- **No setup.** Hosts come from your ssh config. If `ssh devbox` works in a
-  terminal, `devbox` works in fwd.
-- **Ranges.** `3***` forwards whatever is listening between 3000 and 3999,
-  following servers as they start and stop.
-- **Never "port already in use".** If the laptop port is taken, fwd uses the
-  next free one and tells you.
-- **Shows what's alive.** Each port shows whether a server is listening on
-  the remote and whether a connection is open through it.
-- **Recovers by itself.** Sleep, lid close and network changes are handled.
+**SSH port forwarding that lives in your menu bar.**
 
-## Requirements
+Type `3000`, get `localhost:3000` from your dev box. No flags, no terminal tab to babysit.
 
-- macOS 26 or later on Apple Silicon.
-- Key-based ssh login that works without prompting (keys in the agent or the
-  keychain). fwd never asks for a password; a host that needs one shows
-  "needs attention" with an **Open in Terminal** button so you can sort it out.
+[![Latest release](https://img.shields.io/github/v/release/kylefritz/fwd?label=release&color=1f9d8a)](https://github.com/kylefritz/fwd/releases/latest)
+[![CI](https://github.com/kylefritz/fwd/actions/workflows/ci.yml/badge.svg)](https://github.com/kylefritz/fwd/actions/workflows/ci.yml)
+![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black?logo=apple)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+[Install](#install) · [Using it](#using-it) · [When fwd connects](#when-fwd-connects) · [Troubleshooting](#troubleshooting)
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img src="docs/screenshot-light.png" width="440" alt="The fwd panel: devbox forwarding web, api and a 42** range; gpu-box forwarding Jupyter; staging waiting for an ssh session">
+</picture>
+
+</div>
+
+## Why fwd
+
+`ssh -L 3000:localhost:3000 devbox` works, until the laptop sleeps, the Wi-Fi
+changes, a second server starts on 3001, or something local already has 3000.
+fwd does the bookkeeping:
+
+- 🔌 **Zero setup.** Hosts come straight from `~/.ssh/config`. If `ssh devbox`
+  works in a terminal, it works in fwd, including ProxyJump, Cloudflare Access
+  and hardware keys.
+- ✳️ **Ranges.** `3***` forwards whatever is listening from 3000 to 3999, and
+  follows servers as they start and stop.
+- 🔀 **Never "address already in use".** If the laptop port is taken, fwd picks
+  the next free one and shows you where it went.
+- 🟢 **See what's alive.** Each port shows whether a server is listening on the
+  remote and whether a connection is open through it right now.
+- 🖥️ **One-click Screen Sharing.** Opens the remote's screen over the same ssh
+  connection.
+- 🤝 **Polite.** fwd connects while you're ssh'd into a host, or when you ask it
+  to. It doesn't dial out on its own unless you pin a port to stay connected.
 
 ## Install
 
-### Homebrew (recommended)
+> [!NOTE]
+> Needs macOS 26 or later on Apple Silicon, and ssh keys that log in without a
+> prompt (in the agent or the keychain). fwd never asks for passwords.
+
+**Homebrew** (recommended)
 
 ```sh
 brew install kylefritz/tap/fwd
-fwd
 ```
 
-Homebrew builds fwd on your machine, so macOS has nothing to block. Update
-with `brew upgrade fwd`; the app tells you when a new version is out.
+Homebrew builds fwd on your machine, so Gatekeeper has nothing to block.
+Update with `brew upgrade fwd`; the app tells you when there's a new version.
 
-### Download
+**Download**
 
-Get `fwd.zip` from the [latest release](https://github.com/kylefritz/fwd/releases/latest),
-unzip it and move `fwd.app` to `/Applications`.
+Grab `fwd.zip` from the [latest release](https://github.com/kylefritz/fwd/releases/latest)
+and drag `fwd.app` into `/Applications`. A downloaded copy updates itself:
+it fetches new versions in the background and offers **Restart to update**.
 
-fwd is not notarized by Apple, so macOS blocks a downloaded copy the first
-time. Either:
+<details>
+<summary>macOS says it can't open fwd</summary>
 
-- open it once, then go to **System Settings → Privacy & Security** and click
-  **Open Anyway**, or
-- run `xattr -dr com.apple.quarantine /Applications/fwd.app`
+fwd isn't notarized by Apple, so macOS blocks a downloaded copy the first
+time. Either open it once and click **Open Anyway** in **System Settings →
+Privacy & Security**, or run:
 
-A downloaded copy updates itself: it checks GitHub, downloads the new version
-in the background and offers **Restart to update**.
+```sh
+xattr -dr com.apple.quarantine /Applications/fwd.app
+```
 
-### From source
+</details>
+
+<details>
+<summary>Build from source</summary>
 
 Needs only Apple's Command Line Tools (`xcode-select --install`).
 
@@ -60,123 +88,154 @@ git clone https://github.com/kylefritz/fwd && cd fwd
 make install   # builds, copies fwd.app to /Applications, links ~/.local/bin/fwd
 ```
 
+A source build reports version `dev` and doesn't update itself.
+
+</details>
+
 ## Using it
 
-Click the arrow in the menu bar. Each host from your ssh config has a field;
-type a port and press Return.
+Click the fwd icon in the menu bar. Every host in your ssh config gets a
+card; type a port into its field and press Return.
 
-| You type | What you get |
+| You type | You get |
 |---|---|
 | `3000` | remote 3000 on `localhost:3000` |
 | `3000 -> 4000` | remote 3000 on `localhost:4000` |
-| `31**` | every listening remote port from 3100 to 3199, same number locally |
+| `31**` | every listening remote port from 3100 to 3199, same numbers locally |
 | `3*** -> 4***` | every listening remote port from 3000 to 3999, shifted to 4000 to 4999 |
-
-Add a name after the port to label it: `3000 api`, `3000 -> 4000 web`.
-Right-click a pill → **Rename…** to change it later.
+| `3000 api` | the same, labelled `api` |
 
 `*` stands for one digit and goes at the end. The left side is always the
 remote port. Local ports below 1024 aren't allowed (`80 -> 8080` is fine).
 
-Each entry becomes a pill. Click it to turn it off or on; hover for the
-remove button; the arrow icon opens it in your browser. Entries stay in the
-host's history until you remove them or **Clear all**.
+Each entry becomes a pill. Click it to turn it off or on, click the arrow to
+open it in your browser, and right-click for **Keep connected**, **Rename…**,
+**Copy localhost:…** and **Remove**.
+
+| Pill | Meaning |
+|---|---|
+| ◌ dashed circle | off |
+| ○ hollow circle | forwarded, nothing listening on the remote yet |
+| 🟢 green circle | a server is listening on the remote |
+| ⚡ green bolt | a connection is open through it right now |
+| 📌 pin | kept connected |
+| ⚠️ orange triangle | blocked; hover for the reason |
+| ↳ orange bent arrow | your laptop port was taken, so it moved to the one shown |
 
 ### Screen Sharing
 
-Click the display icon next to a host to see its screen. fwd forwards the
-remote's port 5900 to `localhost:5901` (5902 for the next host, and so on)
-and opens it in macOS's built-in Screen Sharing app, with your ssh user name
-filled in. It travels over the same ssh connection, so whatever already gets
-you there (ProxyCommand, Cloudflare Access, a jump host) works unchanged.
-The remote needs Screen Sharing turned on (System Settings → General →
-Sharing), or any VNC server on port 5900.
-
-What the pill's symbol means:
-
-| Symbol | Meaning |
-|---|---|
-| dashed circle | off |
-| hollow circle | forwarded, but nothing is listening on the remote yet |
-| filled green circle | a server is listening on the remote |
-| green bolt | a connection is open through it right now |
-| orange triangle | blocked; hover for the reason |
-| orange bent arrow | the local port you wanted was taken, so it moved to the one shown |
-
-"In use right now" is a sample of open connections every few seconds. A
-long-lived connection always shows; a single quick request may not.
-
-### Forwards in your ssh config
-
-If a host has `LocalForward` or `RemoteForward` lines in your ssh config, fwd
-lists them as dashed "config" pills and shows whether they are currently in
-effect. It never opens them itself; your own ssh sessions do that.
+Click the display icon on a host card. fwd forwards the remote's port 5900 to
+`localhost:5901` (5902 for the next host, and so on) and opens it in macOS's
+Screen Sharing app with your ssh user name filled in. When you close the
+viewer, fwd turns the forward off again. The remote needs Screen Sharing on
+(**System Settings → General → Sharing**) or any VNC server on 5900.
 
 ### From the terminal
 
-`fwd` opens the window, starting the app if needed. `fwd --version` prints the
-version. A Homebrew install has the command already; otherwise choose
-**Install terminal command** from the ••• menu.
+`fwd` opens the window, starting the app if needed, and `fwd --version`
+prints the version. Homebrew installs the command; otherwise use **Install
+terminal command** in the ••• menu.
 
-## When the connection drops
+## When fwd connects
 
-- fwd notices a dead link within about 15 seconds and retries after 2, 5, 15
+fwd holds a connection to a host only when something asks for one:
+
+| Reason | Reconnects after a drop, sleep or network change? |
+|---|---|
+| You have `ssh <host>` open in a terminal | ✅ as long as your session lasts |
+| A port on the host is set to **Keep connected** 📌 | ✅ always |
+| You clicked: turned a port on, Screen Sharing, **Connect** | ❌ connects once |
+
+Otherwise the card says *Not connected · starts when you ssh in* and offers
+**Connect**. That way fwd never keeps knocking on a machine you've stopped
+using, and never opens a sign-in page behind your back.
+
+- A dead link is noticed within about 15 seconds. Retries come after 2, 5, 15
   and 30 seconds, then once a minute.
-- With no network, or while the Mac sleeps, it does nothing at all. It
-  reconnects as soon as the Mac wakes or the network returns.
-- If ssh needs you (key not loaded, unknown host key, expired sign-in), fwd
-  stops retrying and shows **Retry** and **Open in Terminal**.
+- Asleep or offline, fwd does nothing at all, and picks up again when the Mac
+  wakes or the network returns.
+- When ssh needs a person (key not loaded, unknown host key, a browser
+  sign-in), fwd stops and shows **Retry** and **Open in Terminal**.
 
-## Files
+## Configuration
+
+Everything lives in plain files, so it's easy to keep in your dotfiles.
 
 | File | What it is |
 |---|---|
-| `~/.config/fwd/ports.yaml` | Your entries. Safe to edit by hand or keep in dotfiles; changes apply within a second. |
-| `~/.config/fwd/state.yaml` | Local ports fwd chose when yours were taken. Safe to delete. |
-| `~/.config/fwd/config.yaml` | Preferences. `check_for_updates: false` turns off the update check; `update_channel: beta` follows every build of `main` instead of only tagged releases. |
+| `~/.config/fwd/ports.yaml` | Your entries. Edit by hand if you like; changes apply within a second. |
+| `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `update_channel: beta` follows every build of `main`. |
+| `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken. Safe to delete. |
 | `~/Library/Logs/fwd/fwd.log` | The log. **Copy log location** in the ••• menu copies its path. |
 
 ```yaml
 # ~/.config/fwd/ports.yaml
 hosts:
   devbox:
-    - port: "3000"
-      on: true
+    - port: "5173"
+      name: web
+      keep: true        # stay connected without an ssh session
     - port: "3*** -> 4***"
       on: false
 ```
 
 If `ports.yaml` can't be parsed, fwd says so, keeps running on the last good
-version and leaves your file untouched. When fwd itself saves the file,
-comments in it are lost.
-
-## Privacy and trust
-
-fwd makes two kinds of network connection: your own ssh sessions, and a
-request to GitHub to check for a new release (which you can turn off). It
-sends nothing else anywhere.
-
-Updates are trusted because they come over HTTPS from this repository. They
-are not signed with an Apple Developer ID.
+version and leaves your file alone. Comments are lost when fwd saves the file.
 
 ## Troubleshooting
 
-- **A host says "needs attention".** Click **Open in Terminal** and complete
-  whatever ssh asks for, then **Retry**.
-- **A wildcard says it can't scan the host.** The remote has none of `ss`,
-  `netstat` or `lsof`. Single ports still work.
-- **A port shows a bent arrow.** Something on your Mac already had that port.
-  Turn the entry off and on to try the original port again.
-- **Anything else.** `tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is
-  doing. Include the relevant lines when you open an issue.
+<details>
+<summary><b>A host says "needs attention"</b></summary>
+
+Click **Open in Terminal**, finish whatever ssh asks for (load a key, accept a
+host key, sign in), then click **Retry**.
+
+</details>
+
+<details>
+<summary><b>A host says "Not connected · starts when you ssh in"</b></summary>
+
+That's expected: nothing asked for a connection. ssh into the host, click
+**Connect**, or right-click a port and choose **Keep connected**.
+
+</details>
+
+<details>
+<summary><b>A range says it can't scan the host</b></summary>
+
+The remote has none of `ss`, `netstat` or `lsof`. Single ports still work.
+
+</details>
+
+<details>
+<summary><b>A port shows a bent arrow</b></summary>
+
+Something on your Mac already had that port. Turn the entry off and on to try
+the original port again.
+
+</details>
+
+<details>
+<summary><b>Anything else</b></summary>
+
+`tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing. Include the
+relevant lines when you [open an issue](https://github.com/kylefritz/fwd/issues).
+
+</details>
 
 ## How it works
 
-fwd runs the system `ssh` with one background ControlMaster connection per
-host, and adds and removes forwards on it as needed. Everything in your ssh
-config (ProxyJump, ProxyCommand, certificates, hardware keys) therefore works
-as it does in a terminal. A small script run over the same connection lists
-the remote's listening ports.
+fwd drives the system `ssh`: one background ControlMaster connection per
+host, with forwards added and removed on it as needed. Your ssh config applies
+exactly as it does in a terminal. A small POSIX script run over the same
+connection lists the remote's listening ports, and fwd reconciles the
+forwards against it every few seconds.
+
+**Privacy.** fwd talks to your hosts over ssh and asks GitHub whether there's
+a new release (you can turn that off). Nothing else leaves your Mac. Updates
+come over HTTPS from this repository and are checked for the right bundle,
+version and code signature before they're offered; they aren't signed with an
+Apple Developer ID.
 
 ## Development
 
@@ -185,10 +244,10 @@ make test   # unit tests, plus end-to-end tests against a throwaway local sshd
 make app    # build/fwd.app
 ```
 
-The tests start their own OpenSSH server on `127.0.0.1` as your user, with
-generated keys in a temporary folder. No Docker, no root. Design notes are in
+The tests start their own OpenSSH server on `127.0.0.1` as you, with keys in a
+temporary folder. No Docker, no root. Design notes live in
 [docs/spec.md](docs/spec.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)
