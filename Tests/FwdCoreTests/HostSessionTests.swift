@@ -274,10 +274,12 @@ import Testing
         await s.setEntries([Entry(port: "3000", keep: true), Entry(port: "3001")])
         try await eventually("forwards up") { s.active.count == 2 }
         factory.made[0].die()
+        // The session records each forward just after the connection accepts
+        // it, so wait for both views to agree rather than check one after.
         try await eventually("second connection has both forwards") {
             factory.made.count == 2 && factory.made[1].forwards.count == 2 && s.state == .connected
+                && s.active.count == 2
         }
-        #expect(s.active.count == 2)
     }
 
     @Test func linkDyingDuringAForwardCallReconnectsExactlyOnce() async throws {
