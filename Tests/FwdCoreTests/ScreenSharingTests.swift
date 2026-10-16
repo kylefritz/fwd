@@ -27,6 +27,8 @@ import Testing
         let url = try await rig.model.screenSharingURL(host: "mini", timeout: 5)
         #expect(url.absoluteString == "vnc://sam@localhost:5901")
         #expect(try Store(paths: rig.model.paths).loadPorts().hosts["mini"] == [Entry(port: "5900 -> 5901", name: "vnc")])
+        // Cards rebuild on a queued task, so wait for the forward to show.
+        try await eventually("pill shows the forward") { rig.pill("mini", "5900 -> 5901")?.openURL != nil }
         let pill = try #require(rig.pill("mini", "5900 -> 5901"))
         #expect(pill.isScreenSharing)
         #expect(pill.name == "vnc")
