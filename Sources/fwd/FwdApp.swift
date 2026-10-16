@@ -315,8 +315,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
-    /// Runs `command` in a new Terminal window through the user's login
-    /// shell, so their PATH applies.
+    /// Runs `command` in a new terminal window (iTerm2 if installed) through
+    /// the user's login shell, so their PATH applies.
+    /// iTerm2 if it's installed: people who install it want their terminals
+    /// there, whatever app opens ssh:// links by default.
+    private var iTerm: URL? {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.googlecode.iterm2")
+    }
+
     @discardableResult
     private func runInTerminal(name: String, command: String) -> Bool {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-terminal")
@@ -326,7 +332,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         do {
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-            NSWorkspace.shared.open(script)
+            if let iTerm {
+                NSWorkspace.shared.open([script], withApplicationAt: iTerm, configuration: NSWorkspace.OpenConfiguration())
+            } else {
+                NSWorkspace.shared.open(script)
+            }
             return true
         } catch {
             model.log.write("couldn't open a terminal: \(error.localizedDescription)")
@@ -379,6 +389,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// ssh is asking for. A `.command` file opens in the default terminal app
     /// without needing automation permission.
     func openInTerminal(host: String) {
+        // An ssh:// link runs plain `ssh <host>` in the terminal app, with no
+        // script in between. It can't carry -F, or -- before a host that looks
+        // like an option, so those still go through the script.
+        var link = URLComponents()
+        link.scheme = "ssh"
+        link.host = host
+        if paths.sshConfigOverride == nil, !host.hasPrefix("-"), let url = link.url, url.host == host {
+            if let iTerm {
+                NSWorkspace.shared.open([url], withApplicationAt: iTerm, configuration: NSWorkspace.OpenConfiguration())
+            } else {
+                NSWorkspace.shared.open(url)
+            }
+            model.log.write("opened a terminal for the user", host: host)
+            return
+        }
         // The host name only ever appears single-quoted, so nothing in it
         // can be read by the shell as code.
         var command = "printf 'fwd: connecting to %s\\n' \(shellQuote(host)); exec ssh"

@@ -280,6 +280,11 @@ Connect button.
   error line with two buttons: "Retry", and "Open in Terminal", which runs
   `ssh <host>` in the user's terminal so they can complete whatever ssh is
   asking for. After a successful retry the host continues normally.
+- "Open in Terminal" opens an `ssh://<host>` link, so the terminal runs plain
+  `ssh <host>`: in iTerm2 if it's installed, otherwise in whatever app opens
+  ssh links (Terminal by default). With a custom ssh config (`-F`), or a host
+  name starting with `-`, it runs a small script instead, which passes `-F`
+  and `--`. The `$EDITOR` fallback for editing files also prefers iTerm2.
 
 ## Scanning and status
 
