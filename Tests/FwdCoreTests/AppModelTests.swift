@@ -153,6 +153,8 @@ import Testing
         try await rig.model.setKeep(host: "devbox", text: "8765", keep: false)
         #expect(!rig.portsText.contains("keep"))
         #expect(rig.card("devbox")?.state == .connected)
+        #expect(rig.box.made["devbox"]?.count == 2, "unchecking must not drop and reconnect")
+        #expect(rig.box.made["devbox"]?.last?.stopCount == 0)
         await rig.model.shutdown()
     }
 
@@ -176,6 +178,18 @@ import Testing
         await rig.model.checkScreenSharing()
         #expect(rig.pill("devbox", "5900 -> 5901")?.on == false)
         #expect(rig.card("devbox")?.state == .idle)
+        await rig.model.shutdown()
+    }
+
+    @Test func screenSharingLeavesAForwardYouTurnedOnYourself() async throws {
+        let rig = try Rig()
+        rig.box.listening = "#fwd:ss\nLISTEN 0 1 127.0.0.1:5900 0.0.0.0:*\n"
+        await rig.model.start(runTimer: false)
+        try await rig.model.add(host: "devbox", text: "5900 -> 5901 vnc")
+        _ = try await rig.model.screenSharingURL(host: "devbox", timeout: 5)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        await rig.model.checkScreenSharing()
+        #expect(rig.pill("devbox", "5900 -> 5901")?.on == true)
         await rig.model.shutdown()
     }
 

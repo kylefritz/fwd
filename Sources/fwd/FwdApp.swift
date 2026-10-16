@@ -140,11 +140,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Like `--snapshot`, but draws the menu bar panel at the size it picks for itself.
+    /// `--light` draws it in light mode whatever the system uses.
     private func snapshotPanel(to file: URL) {
         let view = NSHostingView(rootView:
             PanelView(model: model, updater: updater, app: self, inWindow: false)
                 .frame(width: 440)
                 .background(.windowBackground))
+        if CommandLine.arguments.contains("--light") { view.appearance = NSAppearance(named: .aqua) }
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 100),
                          styleMask: [.borderless], backing: .buffered, defer: false)
         w.contentView = view
@@ -272,7 +274,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Runs `command` in a new Terminal window through the user's login
     /// shell, so their PATH applies.
-    private func runInTerminal(name: String, command: String) {
+    @discardableResult
+    private func runInTerminal(name: String, command: String) -> Bool {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-terminal")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let script = dir.appendingPathComponent("\(name).command")
@@ -281,8 +284,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             try body.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
             NSWorkspace.shared.open(script)
+            return true
         } catch {
             model.log.write("couldn't open a terminal: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -300,23 +305,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// ssh is asking for. A `.command` file opens in the default terminal app
     /// without needing automation permission.
     func openInTerminal(host: String) {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-terminal")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let script = dir.appendingPathComponent("ssh-\(Paths.shortHash(host)).command")
-        func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-        var command = "ssh"
-        if let config = paths.sshConfigOverride { command += " -F \(quote(config.path))" }
-        command += " -- \(quote(host))"
         // The host name only ever appears single-quoted, so nothing in it
         // can be read by the shell as code.
-        let body = "#!/bin/sh\nprintf 'fwd: connecting to %s\\n' \(quote(host))\nexec \(command)\n"
-        do {
-            try body.write(to: script, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-            NSWorkspace.shared.open(script)
+        var command = "printf 'fwd: connecting to %s\\n' \(shellQuote(host)); exec ssh"
+        if let config = paths.sshConfigOverride { command += " -F \(shellQuote(config.path))" }
+        command += " -- \(shellQuote(host))"
+        if runInTerminal(name: "ssh-\(Paths.shortHash(host))", command: command) {
             model.log.write("opened a terminal for the user", host: host)
-        } catch {
-            model.log.write("couldn't open a terminal: \(error.localizedDescription)", host: host)
         }
     }
 

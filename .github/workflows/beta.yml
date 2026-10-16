@@ -45,6 +45,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A re-run gets the same run number, so the same version.
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already published"
+            exit 0
+          fi
           gh release create "v$VERSION" build/fwd.zip --prerelease --target "$SHA" \
             --title "fwd $VERSION" \
             --notes "Beta built from ${SHA:0:7}. Set \`update_channel: beta\` in ~/.config/fwd/config.yaml to follow these."

@@ -110,6 +110,7 @@ public final class AppModel: ObservableObject {
 
     /// Hosts you have your own ssh session to, from the last look.
     private var openSessions: Set<String> = []
+    private var lookingForSessions = false
 
     struct ScreenSharingUse {
         let port: String
@@ -210,10 +211,22 @@ public final class AppModel: ObservableObject {
     }
 
     /// Looks for your own ssh sessions and tells each host whether it has one.
+    /// Skipped while no host has a port on, since then nothing depends on it.
     func refreshUserSessions() async {
+        guard !lookingForSessions else { return }
+        guard sessions.values.contains(where: \.hasEnabledEntries) else {
+            // Not looked at, so not trusted when a port is turned on later.
+            openSessions = []
+            return
+        }
+        lookingForSessions = true
+        defer { lookingForSessions = false }
         openSessions = await userSessions()
-        for (host, session) in sessions { await session.setUserSession(openSessions.contains(host)) }
+        for (host, session) in sessions { await session.setUserSession(hasUserSession(host)) }
     }
+
+    /// ssh matches host names case-insensitively, and so does this.
+    private func hasUserSession(_ host: String) -> Bool { openSessions.contains(host.lowercased()) }
 
     // MARK: Files
 
@@ -329,17 +342,14 @@ public final class AppModel: ObservableObject {
         if turnedOn { await sessions[host]?.connect() }
     }
 
-    /// Marks an entry keep connected, or not. Turning it off counts as a
-    /// click, so a host in use doesn't drop the moment you uncheck it.
+    /// Marks an entry keep connected, or not.
     public func setKeep(host: String, text: String, keep: Bool) async throws {
         await syncFromDisk()
         var entries = file.hosts[host] ?? []
         guard let index = entries.firstIndex(where: { $0.port == text }) else { return }
         entries[index].keep = keep
         if keep, entries[index].port == screenSharing[host]?.port { screenSharing[host] = nil }
-        let wasConnected = sessions[host]?.state == .connected
         try await update(host: host, entries: entries)
-        if !keep, wasConnected { await sessions[host]?.connect() }
     }
 
     public func remove(host: String, text: String) async throws {
@@ -380,6 +390,9 @@ public final class AppModel: ObservableObject {
                 return !pattern.isWildcard && pattern.remoteRange.lowerBound == ScreenSharing.remotePort
             }
         }
+        // Only a forward this click turns on is turned off again afterwards;
+        // one you had on already is yours.
+        let turningOn = vncEntry()?.on != true
         if let existing = vncEntry() {
             if !existing.on { try await toggle(host: host, text: existing.port) }
         } else {
@@ -402,7 +415,7 @@ public final class AppModel: ObservableObject {
                         throw ScreenSharingError.notSharing(host)
                     }
                     log.write("opening Screen Sharing on localhost:\(forward.local)", host: host)
-                    if let entry = vncEntry(), !entry.keep {
+                    if turningOn, let entry = vncEntry(), !entry.keep {
                         screenSharing[host] = ScreenSharingUse(port: entry.port, started: Date())
                     }
                     return ScreenSharing.url(local: forward.local, user: user)
@@ -439,6 +452,7 @@ public final class AppModel: ObservableObject {
                 continue
             }
             screenSharing[host] = nil
+            await syncFromDisk()
             guard var entries = file.hosts[host],
                   let index = entries.firstIndex(where: { $0.port == use.port && $0.on && !$0.keep }) else { continue }
             log.write("Screen Sharing not in use; turning \(use.port) off", host: host)
@@ -460,6 +474,10 @@ public final class AppModel: ObservableObject {
     private func update(host: String, entries: [Entry]) async throws {
         guard fileError == nil else { throw AppModelError.portsFileBroken }
         let previous = file
+        // Losing the last kept port (unchecked, turned off or removed) counts
+        // as a click, so the host's other forwards don't drop mid-use.
+        func keeps(_ list: [Entry]?) -> Bool { list?.contains { $0.on && $0.keep } ?? false }
+        if keeps(file.hosts[host]), !keeps(entries) { sessions[host]?.holdWhileConnected() }
         if entries.isEmpty { file.hosts[host] = nil } else { file.hosts[host] = entries }
         do {
             try save()
@@ -479,7 +497,7 @@ public final class AppModel: ObservableObject {
         for host in Array(file.hosts.keys) {
             guard let entries = file.hosts[host] else { continue }
             let session = session(for: host)
-            await session.setUserSession(openSessions.contains(host))
+            await session.setUserSession(hasUserSession(host))
             await session.setEntries(entries)
         }
         for (host, session) in sessions where file.hosts[host] == nil {

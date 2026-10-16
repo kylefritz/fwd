@@ -162,7 +162,9 @@ public final class Updater: ObservableObject {
         // Keep a waiting "Restart to update" on screen while re-checking.
         if case .ready = before {} else { state = .checking }
         do {
-            let beta = channel() == .beta && releasesListURL != nil
+            // Homebrew only ships tagged releases, so a beta there could never
+            // be installed; only a self-updating copy follows the beta channel.
+            let beta = kind == .release && channel() == .beta && releasesListURL != nil
             let (release, latest) = try await newestRelease(beta: beta)
             log.write("update check\(beta ? " (beta)" : ""): latest is \(latest), running \(currentVersion)")
 

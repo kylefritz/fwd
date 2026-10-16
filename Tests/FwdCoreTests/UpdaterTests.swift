@@ -175,6 +175,21 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(Updater.bundleVersion(installed) == "0.1.1-beta.58")
     }
 
+    @Test func homebrewIgnoresTheBetaChannel() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Cellar/fwd/0.1.0"), version: "0.1.0")
+        server.route("/latest", body: releaseJSON(tag: "v0.1.0", server: server))
+        server.route("/list", body: listJSON([("v0.1.1-beta.3", true, false)], server: server))
+        let u = Updater(releasesURL: server.url("/latest"), releasesListURL: server.url("/list"),
+                        bundleURL: installed, currentVersion: "0.1.0",
+                        log: Log(file: work.appendingPathComponent("log")), kind: .homebrew,
+                        channel: { .beta })
+        await u.check()
+        #expect(u.state == .upToDate, "brew can't install a beta, so don't offer one")
+        #expect(!server.hits.contains("/list"))
+    }
+
     @Test func aBetaUserMovesOntoTheRelease() async throws {
         let server = try TestHTTPServer()
         defer { server.stop() }

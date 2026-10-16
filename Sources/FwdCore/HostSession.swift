@@ -103,6 +103,9 @@ public final class HostSession {
 
     private var wantsConnection: Bool { !patterns.isEmpty && (reconnects || clicked) }
 
+    /// Some valid entry is on, so a connection could be wanted.
+    public var hasEnabledEntries: Bool { !patterns.isEmpty }
+
     public static func stickyKey(host: String, entry: String, remote: Int) -> String {
         "\(host)|\(entry)|\(remote)"
     }
@@ -134,6 +137,13 @@ public final class HostSession {
         log.write("connecting (clicked)", host: host)
         await halt()
         start()
+    }
+
+    /// Treats a live connection as clicked, so an edit that removes its only
+    /// reason (unchecking or turning off the kept port) doesn't drop the
+    /// other forwards mid-use. It still ends at the next drop.
+    public func holdWhileConnected() {
+        if state == .connected { clicked = true }
     }
 
     /// Starts or stops the connection to match the entries and the reasons
@@ -450,6 +460,12 @@ public final class HostSession {
     // MARK: Output
 
     private func set(_ new: HostState) {
+        // A click connects once. Once the host is waiting or paused, it has
+        // been used up, and must not start a connection later on its own.
+        switch new {
+        case .standby, .paused: clicked = false
+        default: break
+        }
         state = new
         changed()
     }

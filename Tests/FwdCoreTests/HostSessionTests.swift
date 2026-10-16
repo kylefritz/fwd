@@ -118,6 +118,36 @@ import Testing
         #expect(factory.made.count == 2)
     }
 
+    @Test func aClickWhileOfflineDoesNotConnectLaterOnItsOwn() async throws {
+        let factory = Factory()
+        let power = FakePower()
+        power.networkUp = false
+        let s = session(factory, power: power)
+        await s.setEntries([Entry(port: "3000"), Entry(port: "3001")])
+        await s.connect()
+        try await eventually("paused") { s.state == .paused("no network") }
+        power.networkUp = true
+        await s.handle(.networkUp)
+        #expect(s.state == .standby)
+        // Some unrelated edit later must not start a connection.
+        await s.setEntries([Entry(port: "3000")])
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.isEmpty)
+        #expect(s.state == .standby)
+    }
+
+    @Test func holdingAConnectionInUseKeepsItThroughLosingKeep() async throws {
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "5432", keep: true), Entry(port: "3000")])
+        try await eventually("up") { s.active.count == 2 }
+        s.holdWhileConnected()
+        await s.setEntries([Entry(port: "5432", on: false, keep: true), Entry(port: "3000")])
+        #expect(s.state == .connected, "turning the kept port off must not drop 3000")
+        #expect(factory.made.count == 1)
+        #expect(factory.made[0].stopCount == 0)
+    }
+
     @Test func connectsOnlyWhileSomethingIsEnabled() async throws {
         let factory = Factory()
         let s = session(factory)
