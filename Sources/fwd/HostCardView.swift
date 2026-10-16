@@ -81,6 +81,7 @@ struct HostCardView: View {
         let style = StateStyle.host(card.state)
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(card.name).font(.headline).lineLimit(1).truncationMode(.middle)
+            if card.inConfig { ScreenSharingButton(host: card.name, model: model, app: app, report: report) }
             if card.state != .idle {
                 Image(systemName: style.symbol).foregroundStyle(style.color).font(.caption)
                     .accessibilityLabel(style.words)
@@ -97,7 +98,6 @@ struct HostCardView: View {
                     .buttonStyle(.link).font(.caption)
                     .help("Connect now. fwd won't reconnect by itself if the link drops, unless you're ssh'd into \(card.name) or a port is set to Keep connected.")
             }
-            if card.inConfig { ScreenSharingButton(host: card.name, model: model, app: app, report: report) }
             if !card.pills.isEmpty {
                 Button("Clear all") {
                     Task { do { try await model.clearAll(host: card.name) } catch { report(error) } }
