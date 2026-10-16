@@ -5,6 +5,8 @@ public enum Invocation: Equatable {
     case openWindow
     case version
     case help
+    /// Print instructions for coding agents; no app needed.
+    case agents
     case request(ControlRequest, json: Bool)
     /// Bad usage, with the message to print; exit 2.
     case usage(String)
@@ -19,6 +21,7 @@ public enum CLIArguments {
         if args.isEmpty { return .openWindow }
         if args == ["--version"] || args == ["-v"] { return .version }
         if args.contains("--help") || args.contains("-h") { return .help }
+        if args == ["agents"] { return .agents }
 
         var json = false, keep = false, wait = false, off = false, all = false
         var timeout: Double?
@@ -76,6 +79,7 @@ public enum CLIArguments {
           fwd connect [host]                 connect a host now
           fwd screen [host]                  open the host's screen in Screen Sharing
           fwd --version                      print the version
+          fwd agents                         instructions to give a coding agent
 
         Options:
           --json          print one JSON object, errors included
@@ -94,5 +98,31 @@ public enum CLIArguments {
           4 timed out
 
         Ports and settings: ~/.config/fwd/   Log: ~/Library/Logs/fwd/fwd.log
+        """
+
+    /// What `fwd agents` prints: a block for a coding agent's instructions
+    /// (CLAUDE.md, AGENTS.md). The README carries the same text, and a test
+    /// keeps the two identical.
+    public static let agentInstructions = """
+        ## fwd: reaching servers on remote hosts
+
+        fwd forwards ports from ssh hosts to this Mac. Use it when something you
+        run here (a browser, curl, tests) needs a server on a remote host.
+
+        - `fwd <host> <port> --wait --json` forwards the port and waits until a
+          server answers. The local URL is in `host.ports[0].url`; it can be a
+          different local port than the remote one.
+        - `fwd status --json` lists hosts, their state and forwarded ports with
+          URLs. Check it instead of guessing ports.
+        - `fwd <host> <port> --json` forwards without waiting (state `waiting`
+          means nothing listens on the remote yet); `fwd wait <host> <port>`
+          waits later.
+        - `fwd off <host> <port>` turns a forward off when you're done.
+        - The host can be left out when exactly one host is connected.
+        - Exit codes: 0 done, 1 couldn't (read `error`), 2 bad usage, 3 the fwd
+          app isn't reachable, 4 timed out.
+        - Don't add `--keep` unless asked: it keeps the host connected after
+          the session that started it ends.
+        - `fwd --help` lists everything.
         """
 }

@@ -141,11 +141,34 @@ fwd off 3000              # turn it off; fwd remove 3000 forgets it
 fwd                       # open the window
 ```
 
-**For agents:** add `--json` to any command for one JSON object on stdout
-(errors included), and check the exit code: 0 done, 1 couldn't (the reason
-is in `error`), 2 bad usage, 3 the fwd app isn't reachable, 4 timed out.
-`fwd 3000 --wait --json` forwards and returns once a server answers.
-`fwd --help` lists everything.
+#### Tell your agent about fwd
+
+Coding agents won't know fwd exists unless you tell them. Paste this into
+your agent's instructions (`~/.claude/CLAUDE.md`, a project's `AGENTS.md`),
+or run `fwd agents` to print it:
+
+```markdown
+## fwd: reaching servers on remote hosts
+
+fwd forwards ports from ssh hosts to this Mac. Use it when something you
+run here (a browser, curl, tests) needs a server on a remote host.
+
+- `fwd <host> <port> --wait --json` forwards the port and waits until a
+  server answers. The local URL is in `host.ports[0].url`; it can be a
+  different local port than the remote one.
+- `fwd status --json` lists hosts, their state and forwarded ports with
+  URLs. Check it instead of guessing ports.
+- `fwd <host> <port> --json` forwards without waiting (state `waiting`
+  means nothing listens on the remote yet); `fwd wait <host> <port>`
+  waits later.
+- `fwd off <host> <port>` turns a forward off when you're done.
+- The host can be left out when exactly one host is connected.
+- Exit codes: 0 done, 1 couldn't (read `error`), 2 bad usage, 3 the fwd
+  app isn't reachable, 4 timed out.
+- Don't add `--keep` unless asked: it keeps the host connected after
+  the session that started it ends.
+- `fwd --help` lists everything.
+```
 
 The command starts fwd if it isn't running. Homebrew installs it; otherwise
 choose **Install Terminal Command** in the ••• menu.

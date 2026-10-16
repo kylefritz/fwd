@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import FwdCore
 
@@ -45,6 +46,25 @@ import Testing
         if case .usage = CLIArguments.parse(["3000", "--timeout"]) {} else { Issue.record("missing value") }
         if case .usage = CLIArguments.parse(["3000", "--timeout", "soon"]) {} else { Issue.record("bad value") }
         if case .usage = CLIArguments.parse(["--json"]) {} else { Issue.record("flags alone") }
+    }
+
+    @Test func agentsPrintsInstructionsWithoutAskingTheApp() {
+        #expect(CLIArguments.parse(["agents"]) == .agents)
+        // A host that happens to be called "agents" is still reachable.
+        #expect(request(["agents", "3000"])?.0 == ControlRequest(cmd: "forward", args: ["agents", "3000"]))
+        let text = CLIArguments.agentInstructions
+        for needle in ["--wait --json", "fwd status --json", "fwd off", "Exit codes", "--keep"] {
+            #expect(text.contains(needle), "\(needle)")
+        }
+        #expect(CLIArguments.help.contains("fwd agents"))
+    }
+
+    @Test func theReadmeCarriesTheSameAgentInstructions() throws {
+        let readme = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("README.md")
+        let text = try String(contentsOf: readme, encoding: .utf8)
+        #expect(text.contains(CLIArguments.agentInstructions), "README's agent block must match `fwd agents` exactly")
     }
 
     @Test func helpMentionsEveryCommandAndExitCode() {

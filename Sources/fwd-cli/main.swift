@@ -48,6 +48,8 @@ case .version:
     print(version())
 case .help:
     print(CLIArguments.help)
+case .agents:
+    print(CLIArguments.agentInstructions)
 case .usage(let message):
     fail(message, .usage)
 case .openWindow:
