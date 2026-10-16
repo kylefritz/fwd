@@ -17,6 +17,12 @@ cp "$BINARY" "$APP/Contents/MacOS/fwd"
 cp scripts/fwd "$APP/Contents/Resources/bin/fwd"
 chmod 755 "$APP/Contents/Resources/bin/fwd"
 
+# The icon is drawn by the app itself (Sources/fwd/Icon.swift).
+ICONSET="build/AppIcon.iconset"
+rm -rf "$ICONSET"
+"$BINARY" --write-iconset "$ICONSET"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -25,6 +31,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>fwd</string>
   <key>CFBundleDisplayName</key><string>fwd</string>
   <key>CFBundleExecutable</key><string>fwd</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIdentifier</key><string>io.github.kylefritz.fwd</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>

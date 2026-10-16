@@ -109,7 +109,8 @@ extension Comparable {
 
 /// fwd's own errors read well as-is; system errors need their localized text.
 func message(for error: Error) -> String {
-    if error is PortPattern.ParseError || error is AppModelError || error is ScreenSharingError { return "\(error)" }
+    if error is PortPattern.ParseError || error is AppModelError || error is ScreenSharingError
+        || error is SSHConfigFile.ExampleError { return "\(error)" }
     return error.localizedDescription
 }
 
@@ -193,13 +194,25 @@ struct EmptyStateView: View {
     let configPath: String
     let app: AppDelegate
 
+    @State private var problem: String?
+
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "arrow.right.circle").font(.system(size: 34)).foregroundStyle(.secondary)
+            Image(nsImage: FwdMark.menuBarImage(.forwarding)).resizable().scaledToFit()
+                .frame(width: 44, height: 36).foregroundStyle(.secondary)
             Text(configMissing ? "No ssh config found" : "No hosts in your ssh config yet")
                 .font(.headline)
-            Text("fwd forwards ports for the hosts in \(configPath). Add a Host entry there and it will appear here. If `ssh <host>` works in a terminal, it works in fwd.")
+            Text("fwd forwards ports for the hosts in \((configPath as NSString).abbreviatingWithTildeInPath). Add a Host entry there and it will appear here. If `ssh <host>` works in a terminal, it works in fwd.")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            HStack {
+                Button("Add an example host") {
+                    do { try app.addExampleHost() } catch { problem = message(for: error) }
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Writes a sample Host entry for you to edit, then opens the file")
+                Button("Open ssh config") { app.openSSHConfig() }
+            }
+            if let problem { Text(problem).font(.caption).foregroundStyle(.red) }
             if let url = URL(string: "https://github.com/\(Paths.repository)#readme") {
                 Button("Read the guide") { app.open(url) }.buttonStyle(.link)
             }
@@ -304,6 +317,7 @@ struct FooterView: View {
 
                 Menu {
                     if !inWindow { Button("Open window") { app.showWindow() } }
+                    Button("Open ssh config") { app.openSSHConfig() }
                     Button("Open log") { app.openLog() }
                     Button("Copy log location") {
                         app.copyLogLocation()

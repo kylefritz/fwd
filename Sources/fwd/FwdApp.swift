@@ -6,6 +6,19 @@ import SwiftUI
 struct FwdApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
+    init() {
+        // Build step: `fwd --write-iconset <dir>` draws the app icon and exits.
+        if let flag = CommandLine.arguments.firstIndex(of: "--write-iconset"), flag + 1 < CommandLine.arguments.count {
+            do {
+                try FwdMark.writeIconset(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]))
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("couldn't write the iconset: \(error)\n".utf8))
+                exit(1)
+            }
+        }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             PanelView(model: delegate.model, updater: delegate.updater, app: delegate, inWindow: false)
@@ -17,14 +30,15 @@ struct FwdApp: App {
     }
 }
 
-/// The menu bar glyph: one shape per overall state, so it never relies on
-/// color, plus a badge when an update is waiting.
+/// The menu bar glyph: the fwd mark, dimmed when idle, with a dot at the top
+/// for attention and at the bottom when an update is waiting. Never relies
+/// on color.
 struct MenuBarIcon: View {
     @ObservedObject var model: AppModel
     @ObservedObject var updater: Updater
 
     var body: some View {
-        Image(systemName: symbol)
+        Image(nsImage: FwdMark.menuBarImage(look))
             .accessibilityLabel(label)
     }
 
@@ -33,12 +47,12 @@ struct MenuBarIcon: View {
         return false
     }
 
-    private var symbol: String {
-        if updateWaiting { return "arrow.down.circle.fill" }
+    private var look: FwdMark.Look {
+        if updateWaiting { return .updateReady }
         switch model.overall {
-        case .idle: return "arrow.right.circle"
-        case .forwarding: return "arrow.right.circle.fill"
-        case .attention: return "exclamationmark.circle"
+        case .idle: return .idle
+        case .forwarding: return .forwarding
+        case .attention: return .attention
         }
     }
 
@@ -202,6 +216,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             model.log.flush()
         }
         NSWorkspace.shared.open(paths.logFile)
+    }
+
+    /// Opens the ssh config in VS Code, else `$EDITOR` in Terminal, else
+    /// TextEdit. Creates an empty one first if there's none.
+    func openSSHConfig() {
+        let file = model.paths.sshConfig
+        do {
+            try SSHConfigFile.ensureExists(file)
+        } catch {
+            model.log.write("couldn't create \(file.path): \(error.localizedDescription)")
+            return
+        }
+        let vsCode = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.microsoft.VSCode")
+        Task {
+            let editor = vsCode == nil ? await loginShellEditor() : nil
+            switch SSHConfigFile.chooseEditor(vsCode: vsCode, editor: editor) {
+            case .app(let app):
+                _ = try? await NSWorkspace.shared.open([file], withApplicationAt: app,
+                                                       configuration: NSWorkspace.OpenConfiguration())
+            case .terminal(let command):
+                runInTerminal(name: "edit-ssh-config", command: "\(command) \(shellQuote(file.path))")
+            case .textEdit:
+                if let textEdit = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit") {
+                    _ = try? await NSWorkspace.shared.open([file], withApplicationAt: textEdit,
+                                                           configuration: NSWorkspace.OpenConfiguration())
+                }
+            }
+            model.log.write("opened the ssh config")
+        }
+    }
+
+    /// Writes an example host into an ssh config that has none, then opens it.
+    func addExampleHost() throws {
+        try SSHConfigFile.addExample(to: model.paths.sshConfig, user: NSUserName())
+        model.log.write("added an example host to the ssh config")
+        openSSHConfig()
+    }
+
+    /// Apps opened from the Dock or at login don't inherit the shell's
+    /// environment, so ask the login shell what `$EDITOR` is.
+    private func loginShellEditor() async -> String? {
+        if let editor = ProcessInfo.processInfo.environment["EDITOR"], !editor.isEmpty { return editor }
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        // A marker, because shell startup files can print greetings.
+        let result = await Shell.run(shell, ["-l", "-c", "printf '__fwd_editor__%s\\n' \"$EDITOR\""], timeout: 5)
+        guard let line = result.stdout.split(whereSeparator: \.isNewline)
+            .last(where: { $0.hasPrefix("__fwd_editor__") }) else { return nil }
+        let editor = line.dropFirst("__fwd_editor__".count).trimmingCharacters(in: .whitespaces)
+        return editor.isEmpty ? nil : editor
+    }
+
+    private func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+    /// Runs `command` in a new Terminal window through the user's login
+    /// shell, so their PATH applies.
+    private func runInTerminal(name: String, command: String) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-terminal")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let script = dir.appendingPathComponent("\(name).command")
+        let body = "#!/bin/sh\nexec \"${SHELL:-/bin/zsh}\" -l -c \(shellQuote(command))\n"
+        do {
+            try body.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            NSWorkspace.shared.open(script)
+        } catch {
+            model.log.write("couldn't open a terminal: \(error.localizedDescription)")
+        }
     }
 
     func copyLogLocation() {

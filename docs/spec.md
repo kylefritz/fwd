@@ -310,7 +310,12 @@ other order, fwd's entry is bumped to a nearby port as usual.
 
 ## UI
 
-- Menu bar icon with three looks: idle, forwarding, reconnecting or attention.
+- Menu bar icon: the fwd mark, two solid rounded chevrons (`>>`), drawn in
+  code (`Sources/fwd/Icon.swift`) as a template image. Dimmed when idle, full
+  when forwarding, a dot top-right for attention and bottom-right when an
+  update is waiting.
+- App icon: the same chevrons in white on a green-to-teal rounded square,
+  rendered by the app itself (`fwd --write-iconset`) during `scripts/bundle.sh`.
 - Panel: one card per host. Each card has the host name, a one-line status, a
   port field (Enter adds) and the entry pills.
 - Hosts with entries are listed first as full cards. All other hosts from the
@@ -335,12 +340,19 @@ other order, fwd's entry is bumped to a nearby port as usual.
   Sharing on that machine instead of opening a dead connection. Auth or
   connection problems surface as the host's usual errors; after 30 s without
   a connection it says so and the forward keeps retrying.
-- Footer: "Turn all off", "Open window", "Open log", "Copy log location",
+- Footer: "Turn all off", "Open window", "Open ssh config", "Open log", "Copy log location",
   "Launch at login" (a checkbox), "Install terminal command", "Check for
   updates", the version, and
   "Quit".
-- First run with no usable hosts shows a short explanation and a link to the
-  README instead of an empty panel.
+- First run with no usable hosts shows a short explanation, an "Open ssh
+  config" button, an "Add an example host" button and a link to the README
+  instead of an empty panel. The example is a commented `Host devbox` block
+  with the user's login name, appended (never written over anything) and
+  only offered while the config has no hosts; the file and `~/.ssh` get
+  ssh's permissions (0600, 0700) if fwd creates them.
+- "Open ssh config" (also in the ••• menu) opens the file in VS Code if it's
+  installed, else in `$EDITOR` in a Terminal window (read from the login
+  shell, since apps don't inherit the shell's environment), else TextEdit.
 - Tone is small and friendly: rounded pills, soft colors, a little motion on
   state changes. Follows light and dark mode. Every state also has a text or
   shape cue and a VoiceOver label, so nothing depends on color alone.
