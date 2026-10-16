@@ -189,7 +189,8 @@ Replies:
 - `forward`, `off`, `remove`, `keep`, `wait`: `{"ok":true,"host":host}`,
   where `host.ports` holds only the ports the command named.
 - `connect`: `{"ok":true,"host":host}`.
-- `screen`: `{"ok":true,"host":"devbox","url":"vnc://kyle@localhost:5901"}`.
+- `screen`: `{"ok":true,"host":host,"url":"vnc://kyle@localhost:5901"}`, the
+  host object like every other command.
 - Failure: `{"ok":false,"code":1,"error":"devbox needs you: ...","host":host?}`.
 
 ### Exit codes
@@ -277,8 +278,10 @@ timeout passes first. With `--wait`, only `live` and `active` count.
   oversized and malformed requests; a protocol version mismatch; a stale
   socket file is replaced.
 - **End to end**: the integration suite's sshd, a real `AppModel` with
-  `ControlServer`, and the built `fwd-cli` binary run as a process with
-  `FWD_HOME`: `fwd testbox <port> --wait --json` returns a URL that fetches.
+  `ControlServer`, and `CLIRunner` (the command's request loop) in process:
+  forward a port, start a server on the remote, `wait`, and fetch through the
+  tunnel. The built binary itself is checked by CI's `fwd --version` and
+  `fwd --help` steps.
 - CI's existing check `fwd --version` = the tag keeps guarding `--version`.
 
 ## Documentation

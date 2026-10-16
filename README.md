@@ -128,9 +128,27 @@ viewer, fwd turns the forward off again. The remote needs Screen Sharing on
 
 ### From the terminal
 
-`fwd` opens the window, starting the app if needed, and `fwd --version`
-prints the version. Homebrew installs the command; otherwise use **Install
-Terminal Command** in the ••• menu.
+The `fwd` command does what the panel does, so you, scripts and coding
+agents can forward ports without clicking:
+
+```sh
+fwd devbox 3000           # forward devbox:3000, print http://localhost:3000
+fwd 3000                  # the same, when devbox is the one connected host
+fwd 3000 5173 web --keep  # several ports, with a name, kept connected
+fwd wait 3000             # block until a server answers on devbox:3000
+fwd status                # hosts and ports with their live state
+fwd off 3000              # turn it off; fwd remove 3000 forgets it
+fwd                       # open the window
+```
+
+**For agents:** add `--json` to any command for one JSON object on stdout
+(errors included), and check the exit code: 0 done, 1 couldn't (the reason
+is in `error`), 2 bad usage, 3 the fwd app isn't reachable, 4 timed out.
+`fwd 3000 --wait --json` forwards and returns once a server answers.
+`fwd --help` lists everything.
+
+The command starts fwd if it isn't running. Homebrew installs it; otherwise
+choose **Install Terminal Command** in the ••• menu.
 
 ## When fwd connects
 

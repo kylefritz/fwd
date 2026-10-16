@@ -564,26 +564,31 @@ Settings show up.
 
 ## Terminal command
 
-Typing `fwd` in a terminal opens the app's window, starting the app first if
-it is not running. If it is already running, the existing instance comes to
-the front; a second copy is never started.
+The `fwd` command drives the running app: `fwd devbox 3000` forwards a port
+and prints its URL, and `status`, `wait`, `off`, `remove`, `keep`, `connect`
+and `screen` do what the panel does. Full design, including the JSON output
+and exit codes: `docs/superpowers/specs/2026-10-16-cli-design.md`.
 
-- The command is a small script shipped inside the bundle at
-  `fwd.app/Contents/Resources/bin/fwd`. It asks macOS to open the app by
-  bundle identifier, so it keeps working if the app is moved, and it returns
-  immediately rather than tying up the terminal.
-- `fwd --version` prints the installed version; `fwd --help` prints usage.
-  Those are the only arguments.
-- The footer item "Install Terminal Command" symlinks the script to
+- `fwd` with no arguments opens the app's window, starting the app first if
+  it is not running; a second copy is never started. `fwd --version` prints
+  exactly the version (the release checks compare it with the tag), and
+  `fwd --help` prints usage.
+- The command is a Swift binary built from `Sources/fwd-cli` and shipped in
+  the bundle at `fwd.app/Contents/Resources/bin/fwd`. It talks to the app over
+  `<socketDir>/control.sock` (mode 0600, in the owner-checked `/tmp/fwd-<uid>`
+  folder; the app also checks the caller is the same user), one JSON line
+  each way. If nothing answers, it starts the app in the background
+  (`open -g -b io.github.kylefritz.fwd`) and retries for about 10 seconds.
+- The ••• menu item "Install Terminal Command" symlinks the command to
   `~/.local/bin/fwd`, which needs no administrator password. If that folder
   is not on `PATH`, the app shows the one line to add to the shell profile.
-  The item reads "Terminal command installed" once the link exists and points
+  The item reads "Terminal Command Installed" once the link exists and points
   at this copy of the app. `make install` creates the same link.
 - Because it is a symlink into the bundle, updates carry the command along
   with no reinstall.
-- A Homebrew install puts `fwd` on `PATH` by itself, and the footer item is
+- A Homebrew install puts `fwd` on `PATH` by itself, and the menu item is
   hidden.
-- Without installing anything, `open -a fwd` does the same job.
+- Without the command, `open -a fwd` still opens the window.
 
 ## Testing
 
