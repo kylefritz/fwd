@@ -7,7 +7,7 @@ final class TestHTTPServer: @unchecked Sendable {
     let port: Int
     private let fd: Int32
     private let lock = NSLock()
-    private var routes: [String: (status: Int, body: Data)] = [:]
+    private var routes: [String: (status: Int, body: Data, headers: String)] = [:]
     private(set) var hits: [String] = []
     /// Each request's full text, headers included.
     private(set) var requests: [String] = []
@@ -40,9 +40,9 @@ final class TestHTTPServer: @unchecked Sendable {
         }
     }
 
-    func route(_ path: String, status: Int = 200, body: Data) {
+    func route(_ path: String, status: Int = 200, body: Data, headers: [String: String] = [:]) {
         lock.lock()
-        routes[path] = (status, body)
+        routes[path] = (status, body, headers.map { "\($0.key): \($0.value)\r\n" }.joined())
         lock.unlock()
     }
 
@@ -62,7 +62,7 @@ final class TestHTTPServer: @unchecked Sendable {
         lock.unlock()
         let status = route?.status ?? 404
         let body = route?.body ?? Data()
-        var response = Data("HTTP/1.1 \(status) X\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+        var response = Data("HTTP/1.1 \(status) X\r\n\(route?.headers ?? "")Content-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
         response.append(body)
         response.withUnsafeBytes { raw in
             var sent = 0
@@ -279,6 +279,22 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(github.hits.contains("/latest"))
         try await Task.sleep(nanoseconds: 300_000_000)
         #expect(stats.requests.isEmpty)
+    }
+
+    @Test func aPingNeverFollowsARedirect() async throws {
+        let github = try TestHTTPServer()
+        let stats = try TestHTTPServer()
+        let elsewhere = try TestHTTPServer()
+        defer { github.stop(); stats.stop(); elsewhere.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "1.0.0")
+        github.route("/latest", body: releaseJSON(tag: "v1.0.0", server: github))
+        // A redirect rule on the domain sends everything somewhere else.
+        stats.route("/v1/ping", status: 302, body: Data(), headers: ["Location": elsewhere.url("/profile").absoluteString])
+        elsewhere.route("/profile", body: Data("hi".utf8))
+        await counted(github, installed: installed, stats: stats).check()
+        try await eventually("pinged") { !stats.requests.isEmpty }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(elsewhere.requests.isEmpty, "install details must not go wherever a redirect points")
     }
 
     @Test func aDownStatsServerChangesNothing() async throws {

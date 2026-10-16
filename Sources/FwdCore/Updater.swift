@@ -240,7 +240,9 @@ public final class Updater: ObservableObject {
                               ("X-Fwd-OS", osVersion)] {
             request.setValue(value, forHTTPHeaderField: name)
         }
-        _ = try? await get(request, expecting: 204)
+        // Never follow a redirect: a rule on the domain could otherwise send
+        // these details anywhere.
+        _ = try? await get(request, expecting: 204, delegate: NoRedirects())
     }
 
     private func fetchReleases(beta: Bool) async throws -> Data {
@@ -250,10 +252,11 @@ public final class Updater: ObservableObject {
         return try await get(request)
     }
 
-    private func get(_ request: URLRequest, expecting status: Int = 200) async throws -> Data {
+    private func get(_ request: URLRequest, expecting status: Int = 200,
+                     delegate: (any URLSessionTaskDelegate)? = nil) async throws -> Data {
         var request = request
         request.setValue("fwd/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: delegate)
         guard (response as? HTTPURLResponse)?.statusCode == status else { throw URLError(.badServerResponse) }
         return data
     }
@@ -361,5 +364,13 @@ public final class Updater: ObservableObject {
             throw error
         }
         try? fm.removeItem(at: backup)
+    }
+}
+
+/// Answers every redirect with "no": the response is the redirect itself.
+private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        nil
     }
 }

@@ -492,7 +492,9 @@ else. The log stays on the machine unless the user puts it in an issue
 - Each update check also sends `POST https://fwd.kylefritz.co/v1/ping`, in
   its own task, with `X-Fwd-Install` (the random `install_id`),
   `X-Fwd-Version`, `X-Fwd-Channel`, `X-Fwd-Kind` (`release`, `homebrew`,
-  `source`) and `X-Fwd-OS`. Its answer and failures are ignored.
+  `source`) and `X-Fwd-OS`. Its answer and failures are ignored. It never
+  follows a redirect, so a rule on the domain can't send these details
+  elsewhere.
 - The Worker in `worker/` adds the IP address and country and writes a row
   to the `fwd_pings` Analytics Engine dataset. Release information and
   downloads always come from GitHub directly, so the stats server can't
