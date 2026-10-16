@@ -23,6 +23,15 @@ rm -rf "$ICONSET"
 "$BINARY" --write-iconset "$ICONSET"
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 
+# The commit it was built from, to tell dev builds apart; "-dirty" means
+# uncommitted changes went in too. Empty when building from a source
+# tarball, as Homebrew does.
+COMMIT=""
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  COMMIT=$(git rev-parse --short HEAD)
+  git diff --quiet HEAD -- || COMMIT="$COMMIT-dirty"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -36,6 +45,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
+  <key>FwdCommit</key><string>${COMMIT}</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSUIElement</key><true/>

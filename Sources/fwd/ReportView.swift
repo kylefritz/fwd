@@ -95,7 +95,7 @@ struct ReportView: View {
 
     private func submit() {
         let log = includesLog && !preview.isEmpty ? preview : nil
-        let issue = IssueReport.issue(kind: kind, title: title, version: AppDelegate.version,
+        let issue = IssueReport.issue(kind: kind, title: title, version: AppDelegate.reportVersion,
                                       macOS: Updater.systemVersion, log: log)
         if let log, !issue.logInline { app.handOver(log: log) }
         app.open(issue.url)

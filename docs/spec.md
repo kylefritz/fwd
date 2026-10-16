@@ -477,6 +477,11 @@ else. The log stays on the machine unless the user puts it in an issue
   offers "Open release page" and the reason is logged.
 - Failed checks (offline, rate limited) are logged and retried at the next
   interval, with no UI.
+- `bundle.sh` stamps `FwdCommit` (the short commit, `-dirty` with uncommitted
+  changes; empty without git, as in Homebrew's tarball build) into
+  Info.plist. The footer shows `dev · <commit>` for a dev build, and bug
+  reports give the version with the commit. `fwd --version` prints only the
+  version, which the release checks compare with the tag.
 - A build from source reports version `dev` and never self-updates; it only
   mentions that a release exists.
 

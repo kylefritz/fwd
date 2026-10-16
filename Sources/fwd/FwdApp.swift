@@ -88,6 +88,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
     }
 
+    /// The short commit the bundle was built from, `-dirty` if uncommitted
+    /// changes went in. Nil for builds without git, such as Homebrew's.
+    static var commit: String? {
+        (Bundle.main.infoDictionary?["FwdCommit"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// The footer's version: a dev build shows its commit, since "dev" alone
+    /// doesn't say which code is running.
+    static var displayVersion: String {
+        guard version == "dev" else { return "v\(version)" }
+        return commit.map { "dev · \($0)" } ?? "dev build"
+    }
+
+    /// The version a bug report gives, with the commit when there is one.
+    static var reportVersion: String {
+        commit.map { "\(version) (\($0))" } ?? version
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         // Two copies would close each other's connections. If one is already

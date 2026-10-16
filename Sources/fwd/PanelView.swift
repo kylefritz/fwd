@@ -313,7 +313,8 @@ struct FooterView: View {
                 .disabled(!model.cards.contains { $0.pills.contains(where: \.on) })
 
                 Spacer()
-                Text(versionText).font(.caption).foregroundStyle(.secondary)
+                Text(AppDelegate.displayVersion).font(.caption).foregroundStyle(.secondary)
+                    .help(AppDelegate.commit.map { "Built from commit \($0)" } ?? "")
 
                 Menu {
                     if !inWindow { Button("Open window") { app.showWindow() } }
@@ -361,10 +362,6 @@ struct FooterView: View {
             launchAtLogin = LoginItem.isEnabled
             commandInstalled = CommandInstaller.isInstalled
         }
-    }
-
-    private var versionText: String {
-        updater.currentVersion == "dev" ? "dev build" : "v\(updater.currentVersion)"
     }
 
     private func installCommand() {

@@ -88,7 +88,7 @@ git clone https://github.com/kylefritz/fwd && cd fwd
 make install   # builds, copies fwd.app to /Applications, links ~/.local/bin/fwd
 ```
 
-A source build reports version `dev` and doesn't update itself.
+A source build reports version `dev`, shows the commit it was built from at the bottom of the panel, and doesn't update itself.
 
 </details>
 
