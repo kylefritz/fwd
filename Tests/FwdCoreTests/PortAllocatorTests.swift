@@ -125,11 +125,13 @@ import Testing
         close(v6)
     }
 
-    @Test func systemCheckSeesARealListener() throws {
-        let listener = try TestListener()
+    @MainActor @Test func systemCheckSeesARealListener() async throws {
+        // A port from outside the range the system hands out on its own, so
+        // another test's connection can't take it once the listener stops.
+        let listener = try TestListener(port: try freePort())
         #expect(!PortAllocator.systemIsFree(listener.port))
         let port = listener.port
         listener.stop()
-        #expect(PortAllocator.systemIsFree(port))
+        try await eventually("free again", timeout: 2) { PortAllocator.systemIsFree(port) }
     }
 }
