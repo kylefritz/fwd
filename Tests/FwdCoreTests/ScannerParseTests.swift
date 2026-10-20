@@ -96,6 +96,8 @@ import Testing
 
     @Test func noToolOrGarbageMeansUnknownNotCrash() {
         #expect(RemoteScanner.parse("#fwd:none\n") == nil)
+        // rc chatter with no trailing newline sits in front of the marker.
+        #expect(RemoteScanner.parse("\u{1b}(B\u{1b}[m#fwd:ss\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n") == [22])
         #expect(RemoteScanner.parse("") == nil)
         #expect(RemoteScanner.parse("Welcome to devbox!\nLast login: yesterday\n") == nil)
         #expect(RemoteScanner.parse("#fwd:ss\ngarbage line\nLISTEN x y notanaddress z\nLISTEN 0 1 1.2.3.4:99999 *\n") == [])
