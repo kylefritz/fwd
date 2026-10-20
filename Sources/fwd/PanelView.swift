@@ -12,6 +12,10 @@ struct PanelView: View {
     /// Natural height of the host list, measured so the menu bar panel can
     /// be exactly as tall as what it shows.
     @State private var listHeight: CGFloat = 0
+    /// Height of everything in the panel that isn't the list (banners, divider,
+    /// footer), so the list can be capped to leave room for it on screen.
+    @State private var bannersHeight: CGFloat = 0
+    @State private var footerHeight: CGFloat = 0
 
     private var filtered: [HostCard] {
         let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
@@ -21,10 +25,14 @@ struct PanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            banners
+            VStack(spacing: 0) { banners }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { bannersHeight = $0 }
             content
-            Divider()
-            FooterView(model: model, updater: updater, app: app, inWindow: inWindow, report: report)
+            VStack(spacing: 0) {
+                Divider()
+                FooterView(model: model, updater: updater, app: app, inWindow: inWindow, report: report)
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
         }
         .background(inWindow ? AnyShapeStyle(.windowBackground) : AnyShapeStyle(.clear))
         .onAppear { app.surfaceAppeared() }
@@ -93,13 +101,19 @@ struct PanelView: View {
             .scrollBounceBehavior(.basedOnSize)
             // A ScrollView in a menu bar panel has no height of its own and
             // collapses, so give it the list's height, up to what the screen allows.
-            .frame(height: inWindow ? nil : min(max(listHeight, 44), Self.panelListCap))
+            .frame(height: inWindow ? nil : min(max(listHeight, 44), panelListCap))
         }
     }
 
-    /// Room for the list under the menu bar, leaving space for banners and footer.
-    private static var panelListCap: CGFloat {
-        ((NSScreen.main?.visibleFrame.height ?? 800) - 160).clamped(to: 240...900)
+    /// Room for the list under the menu bar, after the banners and footer.
+    /// In a full-screen app the menu bar is hidden and `visibleFrame` includes
+    /// its space, but the panel still opens below it, so reserve that too.
+    private var panelListCap: CGFloat {
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main
+        let menuBar = NSStatusBar.system.thickness
+        let available = min(screen?.visibleFrame.height ?? 800, (screen?.frame.height ?? 800) - menuBar)
+        let margin: CGFloat = 24
+        return (available - bannersHeight - footerHeight - margin).clamped(to: 120...900)
     }
 }
 
