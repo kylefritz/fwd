@@ -590,7 +590,8 @@ public final class AppModel: ObservableObject {
             let session = sessions[name]
             let state = session?.state ?? .idle
             let pills = Self.displayOrder(file.hosts[name] ?? []).map { pill(for: $0, host: name, session: session) }
-            let configPills = (configForwards[name] ?? []).map {
+            // ssh_config order isn't meaningful to read, so list these by port too.
+            let configPills = (configForwards[name] ?? []).sorted { $0.listenPort < $1.listenPort }.map {
                 ConfigPill(forward: $0, status: configStatus[name]?[$0] ?? .unknown)
             }
             return HostCard(name: name, state: state,
