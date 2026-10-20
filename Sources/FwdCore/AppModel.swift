@@ -53,6 +53,8 @@ public struct Pill: Identifiable, Equatable, Sendable {
 public struct ConfigPill: Identifiable, Equatable, Sendable {
     public let forward: ConfigForward
     public let status: ConfigForwardStatus
+    /// The `# comment` after the forward in the ssh config, if any.
+    public var note: String? = nil
     public var id: String { "\(forward.kind.rawValue)-\(forward.listenPort)-\(forward.target)" }
 }
 
@@ -124,6 +126,7 @@ public final class AppModel: ObservableObject {
     private var sessions: [String: HostSession] = [:]
     private var configHosts: [String] = []
     private var configForwards: [String: [ConfigForward]] = [:]
+    private var configNotes: [String: [SSHConfig.ForwardKey: String]] = [:]
     private var configStatus: [String: [ConfigForward: ConfigForwardStatus]] = [:]
     private var busy: [String: Set<Int>] = [:]
 
@@ -279,6 +282,7 @@ public final class AppModel: ObservableObject {
         let hosts = SSHConfig.hosts(configPath: paths.sshConfig)
         if hosts != configHosts { log.write("ssh config: \(hosts.count) hosts") }
         configHosts = hosts
+        configNotes = SSHConfig.forwardNotes(configPath: paths.sshConfig)
         queueRebuild()
 
         // `ssh -G` per host is slow for big configs, so it runs off to the side.
@@ -591,7 +595,9 @@ public final class AppModel: ObservableObject {
             let state = session?.state ?? .idle
             let pills = Self.displayOrder(file.hosts[name] ?? []).map { pill(for: $0, host: name, session: session) }
             let configPills = (configForwards[name] ?? []).map {
-                ConfigPill(forward: $0, status: configStatus[name]?[$0] ?? .unknown)
+                let key = SSHConfig.ForwardKey(kind: $0.kind, listenPort: $0.listenPort)
+                return ConfigPill(forward: $0, status: configStatus[name]?[$0] ?? .unknown,
+                                  note: configNotes[name]?[key] ?? configNotes["*"]?[key])
             }
             return HostCard(name: name, state: state,
                             statusLine: statusLine(state, session: session),

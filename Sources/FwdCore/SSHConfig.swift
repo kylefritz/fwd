@@ -111,6 +111,70 @@ public enum SSHConfig {
         return (0..<Int(g.gl_pathc)).compactMap { pathv[$0].map { String(cString: $0) } }
     }
 
+    /// Trailing `# comments` on `LocalForward`/`RemoteForward` lines, which
+    /// `ssh -G` throws away: host alias -> (kind, listen port) -> comment.
+    /// Forwards under a pattern `Host` (like `*`) are filed under `"*"`.
+    public static func forwardNotes(
+        configPath: URL,
+        sshDir: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
+    ) -> [String: [ForwardKey: String]] {
+        var notes: [String: [ForwardKey: String]] = [:]
+        var visited = Set<String>()
+        var hostNames: [String] = ["*"]
+        func walk(_ file: URL, depth: Int) {
+            guard depth < 16, visited.insert(file.standardizedFileURL.path).inserted,
+                  let text = try? String(contentsOf: file, encoding: .utf8) else { return }
+            for rawLine in text.split(whereSeparator: \.isNewline) {
+                let line = String(rawLine)
+                let tokens = tokenize(line)
+                guard let keyword = tokens.first?.lowercased() else { continue }
+                switch keyword {
+                case "host":
+                    let names = tokens.dropFirst().map { name in
+                        name.contains(where: { "*?!".contains($0) }) ? "*" : name
+                    }
+                    hostNames = names.isEmpty ? ["*"] : names
+                case "include":
+                    for pattern in tokens.dropFirst() {
+                        for path in expand(pattern, sshDir: sshDir) {
+                            walk(URL(fileURLWithPath: path), depth: depth + 1)
+                        }
+                    }
+                case "localforward", "remoteforward":
+                    guard tokens.count >= 2, let comment = trailingComment(line),
+                          let port = Int(tokens[1].split(separator: ":").last ?? "") else { continue }
+                    let key = ForwardKey(kind: keyword == "localforward" ? .local : .remote, listenPort: port)
+                    for name in hostNames { notes[name, default: [:]][key] = comment }
+                default:
+                    continue
+                }
+            }
+        }
+        walk(configPath, depth: 0)
+        return notes
+    }
+
+    public struct ForwardKey: Hashable, Sendable {
+        public let kind: ConfigForward.Kind
+        public let listenPort: Int
+    }
+
+    /// The text after the first unquoted `#` that starts a word, trimmed.
+    static func trailingComment(_ line: String) -> String? {
+        var inQuotes = false
+        var previous: Character = " "
+        for index in line.indices {
+            let ch = line[index]
+            if ch == "\"" { inQuotes.toggle() }
+            else if ch == "#", !inQuotes, previous == " " || previous == "\t" {
+                let text = line[line.index(after: index)...].trimmingCharacters(in: .whitespaces)
+                return text.isEmpty ? nil : text
+            }
+            previous = ch
+        }
+        return nil
+    }
+
     /// Pulls forwards out of `ssh -G <host>` output, whose lines look like
     /// `localforward 8000 [127.0.0.1]:8000` and `remoteforward 9222 localhost:9222`.
     public static func parseForwards(sshG output: String) -> [ConfigForward] {

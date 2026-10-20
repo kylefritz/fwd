@@ -76,3 +76,20 @@ import Testing
         ])
     }
 }
+
+@Suite struct ForwardNoteTests {
+    @Test func readsTrailingComments() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("notes-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try """
+        Host box
+          LocalForward 8888 localhost:8888 # jupyter lab
+          RemoteForward 9222 localhost:9222
+        Host *
+          LocalForward 127.0.0.1:5432 db:5432   #  postgres
+        """.write(to: file, atomically: true, encoding: .utf8)
+        let notes = SSHConfig.forwardNotes(configPath: file)
+        #expect(notes["box"] == [.init(kind: .local, listenPort: 8888): "jupyter lab"])
+        #expect(notes["*"] == [.init(kind: .local, listenPort: 5432): "postgres"])
+    }
+}
