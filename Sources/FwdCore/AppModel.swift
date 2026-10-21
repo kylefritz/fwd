@@ -594,7 +594,7 @@ public final class AppModel: ObservableObject {
             let session = sessions[name]
             let state = session?.state ?? .idle
             let pills = Self.displayOrder(file.hosts[name] ?? []).map { pill(for: $0, host: name, session: session) }
-            let configPills = (configForwards[name] ?? []).map {
+            let configPills = Self.configDisplayOrder(configForwards[name] ?? []).map {
                 let key = SSHConfig.ForwardKey(kind: $0.kind, listenPort: $0.listenPort)
                 return ConfigPill(forward: $0, status: configStatus[name]?[$0] ?? .unknown,
                                   note: configNotes[name]?[key] ?? configNotes["*"]?[key])
@@ -632,6 +632,12 @@ public final class AppModel: ObservableObject {
             return (entry.on ? 0 : 1, pattern.remoteRange.lowerBound, entry.port)
         }
         return entries.sorted { key($0) < key($1) }
+    }
+
+    /// How a card lists ssh_config forwards: by listening port, local before
+    /// remote on a tie. ssh_config order isn't meaningful to read.
+    static func configDisplayOrder(_ forwards: [ConfigForward]) -> [ConfigForward] {
+        forwards.sorted { ($0.listenPort, $0.kind.rawValue) < ($1.listenPort, $1.kind.rawValue) }
     }
 
     private func rank(_ card: HostCard) -> Int {

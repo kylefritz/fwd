@@ -362,6 +362,18 @@ import Testing
         """
         #expect(TrafficSampler.parse(nettop) == [50075, 3000])
     }
+
+    @Test func configForwardsListByPort() {
+        let forwards = [
+            ConfigForward(kind: .local, listenPort: 8080, target: "localhost:80"),
+            ConfigForward(kind: .remote, listenPort: 3000, target: "localhost:3000"),
+            ConfigForward(kind: .local, listenPort: 5432, target: "db:5432"),
+            ConfigForward(kind: .local, listenPort: 3000, target: "localhost:3001"),
+        ]
+        let ordered = AppModel.configDisplayOrder(forwards)
+        #expect(ordered.map(\.listenPort) == [3000, 3000, 5432, 8080])
+        #expect(ordered.prefix(2).map(\.kind) == [.local, .remote], "local before remote on the same port")
+    }
 }
 
 /// Config-forward status against real processes.

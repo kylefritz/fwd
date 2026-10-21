@@ -27,11 +27,14 @@ public enum RemoteScanner {
     /// skipped.
     public static func parse(_ output: String) -> Set<Int>? {
         let lines = output.split(whereSeparator: \.isNewline).map(String.init)
-        guard let index = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#fwd:") }) else {
+        // The marker may follow rc chatter that ended without a newline
+        // (a prompt file's `tput sgr0`), so look for it inside the line.
+        guard let index = lines.firstIndex(where: { $0.contains("#fwd:") }),
+              let marker = lines[index].range(of: "#fwd:") else {
             return nil
         }
         let rest = Array(lines[(index + 1)...])
-        switch lines[index].trimmingCharacters(in: .whitespaces) {
+        switch lines[index][marker.lowerBound...].trimmingCharacters(in: .whitespaces) {
         case "#fwd:ss": return parseSS(rest)
         case "#fwd:netstat": return parseNetstat(rest)
         case "#fwd:lsof": return parseLsof(rest)
