@@ -456,7 +456,7 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(u.state == .idle)
     }
 
-    @Test func sourceBuildsOnlyMentionTheRelease() async throws {
+    @Test func sourceBuildsNeverOfferARelease() async throws {
         let server = try TestHTTPServer()
         defer { server.stop() }
         let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "dev")
@@ -464,7 +464,7 @@ final class TestHTTPServer: @unchecked Sendable {
         let u = updater(server, installed: installed, version: "dev", kind: nil)
         #expect(u.kind == .source)
         await u.check()
-        #expect(u.state == .available(version: "1.0.0", notes: URL(string: "https://example.com/notes")))
+        #expect(u.state == .upToDate)
         #expect(!server.hits.contains("/fwd.zip"))
         #expect(throws: Updater.UpdateError.self) { try u.install() }
     }

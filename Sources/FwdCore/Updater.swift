@@ -61,7 +61,8 @@ public enum InstallKind: Equatable, Sendable {
     case release
     /// Homebrew owns the files: tell the user to `brew upgrade`.
     case homebrew
-    /// Built from source (version `dev`): only mention that a release exists.
+    /// Built from source (version `dev`): there is no version to compare, so
+    /// it never offers a release.
     case source
 }
 
@@ -191,7 +192,7 @@ public final class Updater: ObservableObject {
 
             switch kind {
             case .source:
-                state = .available(version: latest.description, notes: release.html_url)
+                state = .upToDate
             case .homebrew:
                 guard let running = Version(currentVersion), latest > running else {
                     state = .upToDate
