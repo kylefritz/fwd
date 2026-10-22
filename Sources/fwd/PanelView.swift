@@ -163,6 +163,8 @@ struct UpdateBanner: View {
 
     var body: some View {
         switch updater.state {
+        case _ where updater.bannerDismissed:
+            EmptyView()
         case .ready(let version, let notes):
             row("fwd \(version) is ready") {
                 if let notes { Button("What's new") { app.open(notes) }.buttonStyle(.link) }
@@ -197,6 +199,8 @@ struct UpdateBanner: View {
             Text(title).font(.callout.weight(.medium)).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             trailing()
+            Button { updater.dismissBanner() } label: { Image(systemName: "xmark") }
+                .buttonStyle(.plain).accessibilityLabel("Dismiss")
         }
         .padding(10)
         .background(Color.blue.opacity(0.1))

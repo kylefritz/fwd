@@ -469,6 +469,24 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(throws: Updater.UpdateError.self) { try u.install() }
     }
 
+    @Test func dismissingTheBannerHidesOnlyThatVersion() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let prefix = work.appendingPathComponent("brew")
+        let running = try makeBundle(in: prefix.appendingPathComponent("Cellar/fwd/1.0.0"), version: "1.0.0")
+        server.route("/latest", body: releaseJSON(tag: "v1.1.0", server: server))
+        let u = updater(server, installed: running, version: "1.0.0", kind: nil)
+        await u.check()
+        #expect(u.dismissedVersion == nil)
+        u.dismissBanner()
+        #expect(u.dismissedVersion == "1.1.0")
+        #expect(u.bannerDismissed)
+        server.route("/latest", body: releaseJSON(tag: "v1.2.0", server: server))
+        await u.check()
+        #expect(u.state == .available(version: "1.2.0", notes: URL(string: "https://example.com/notes")))
+        #expect(!u.bannerDismissed)
+    }
+
     @Test func homebrewInstallsNeverReplaceThemselves() async throws {
         let server = try TestHTTPServer()
         defer { server.stop() }
