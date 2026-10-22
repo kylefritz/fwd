@@ -194,15 +194,18 @@ struct ConfigPillView: View {
             Image(systemName: style.symbol).foregroundStyle(style.color).font(.caption2)
             Text(verbatim: "\(pill.forward.listenPort) \(arrow)").font(.caption.monospacedDigit())
             Text("config").font(.caption2).foregroundStyle(.secondary)
+            if pill.note != nil {
+                Image(systemName: "info.circle").font(.caption2).foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 8).padding(.vertical, 3)
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .inset(by: 0.5)
                 .stroke(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
-        .help(Text(verbatim: "\(kind) \(pill.forward.listenPort) \(pill.forward.target): \(style.words). Opened by your own ssh sessions, not by fwd."))
+        .help(Text(verbatim: "\(kind) \(pill.forward.listenPort) \(pill.forward.target): \(style.words). Opened by your own ssh sessions, not by fwd.\(pill.note.map { "\n\($0)" } ?? "")"))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: "\(kind) \(pill.forward.listenPort), from ssh config, \(style.words)"))
+        .accessibilityLabel(Text(verbatim: "\(kind) \(pill.forward.listenPort), from ssh config, \(style.words)\(pill.note.map { ", \($0)" } ?? "")"))
     }
 }
 
