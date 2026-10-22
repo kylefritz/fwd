@@ -61,7 +61,8 @@ public enum InstallKind: Equatable, Sendable {
     case release
     /// Homebrew owns the files: tell the user to `brew upgrade`.
     case homebrew
-    /// Built from source (version `dev`): only mention that a release exists.
+    /// Built from source (version `dev`): there is no version to compare, so
+    /// it never offers a release.
     case source
 }
 
@@ -91,6 +92,8 @@ private struct Release: Decodable {
 @MainActor
 public final class Updater: ObservableObject {
     @Published public private(set) var state: UpdateState = .idle
+    /// The version whose banner the user closed. A newer one shows again.
+    @Published public private(set) var dismissedVersion: String?
 
     public let currentVersion: String
     public let kind: InstallKind
@@ -174,6 +177,26 @@ public final class Updater: ObservableObject {
         await Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", bundle.path], timeout: 30).ok
     }
 
+    /// Whether the user closed the banner for the version now on offer.
+    public var bannerDismissed: Bool {
+        switch state {
+        case .available(let version, _), .ready(let version, _), .manual(let version, _, _):
+            return version == dismissedVersion
+        default:
+            return false
+        }
+    }
+
+    /// Hides the banner for the version it currently offers.
+    public func dismissBanner() {
+        switch state {
+        case .available(let version, _), .ready(let version, _), .manual(let version, _, _):
+            dismissedVersion = version
+        default:
+            break
+        }
+    }
+
     /// Asks GitHub for the latest release and prepares it if it's newer.
     /// Network trouble is logged and otherwise ignored; the next check retries.
     public func check() async {
@@ -191,7 +214,7 @@ public final class Updater: ObservableObject {
 
             switch kind {
             case .source:
-                state = .available(version: latest.description, notes: release.html_url)
+                state = .upToDate
             case .homebrew:
                 guard let running = Version(currentVersion), latest > running else {
                     state = .upToDate
