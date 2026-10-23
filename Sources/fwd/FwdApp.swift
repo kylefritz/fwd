@@ -362,6 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// works; only the command can't reach it.
     private func startControlServer() {
         let handler = ControlHandler(model: model, open: { NSWorkspace.shared.open($0) },
+                                     openInVSCode: { [weak self] host in try await self?.openInVSCode(host: host) },
                                      switchBuild: { [weak self] target, timeout in
                                          guard let self else { throw SwitchError.failed("fwd is quitting") }
                                          return try await self.switchBuild(to: target, timeout: timeout)
@@ -448,6 +449,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func open(_ url: URL) {
         NSWorkspace.shared.open(url)
+    }
+
+    /// The first VS Code-like editor installed, for the host card's button.
+    var vsCode: (editor: VSCode.Editor, app: URL)? {
+        for editor in VSCode.editors {
+            if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleID) {
+                return (editor, app)
+            }
+        }
+        return nil
+    }
+
+    /// Opens a Remote-SSH window on `host` in VS Code (or Cursor).
+    func openInVSCode(host: String) async throws {
+        guard let (editor, app) = vsCode else { throw VSCodeError.notInstalled }
+        try await VSCode.open(host: host, app: app, editor: editor)
+        model.log.write("opened \(editor.name)", host: host)
     }
 
     /// `fwd try`: readies the build, then restarts into it a moment after

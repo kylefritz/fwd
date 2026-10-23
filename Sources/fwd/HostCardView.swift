@@ -81,7 +81,10 @@ struct HostCardView: View {
         let style = StateStyle.host(card.state)
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(card.name).font(.headline).lineLimit(1).truncationMode(.middle)
-            if card.inConfig { ScreenSharingButton(host: card.name, model: model, app: app, report: report) }
+            if card.inConfig {
+                ScreenSharingButton(host: card.name, model: model, app: app, report: report)
+                VSCodeButton(host: card.name, app: app, report: report)
+            }
             if card.state != .idle {
                 Image(systemName: style.symbol).foregroundStyle(style.color).font(.caption)
                     .accessibilityLabel(style.words)
@@ -179,6 +182,47 @@ struct ScreenSharingButton: View {
         Task {
             defer { opening = false }
             do { app.open(try await model.screenSharingURL(host: host)) } catch { report(error) }
+        }
+    }
+}
+
+/// One click: open a Remote-SSH window on the host in VS Code. Shows the
+/// editor's own icon, and nothing when no such editor is installed.
+struct VSCodeButton: View {
+    let host: String
+    let app: AppDelegate
+    let report: (Error) -> Void
+
+    @State private var opening = false
+    @State private var hovering = false
+
+    var body: some View {
+        if let (editor, bundle) = app.vsCode {
+            Button(action: open) {
+                if opening {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: bundle.path))
+                        .resizable().interpolation(.high)
+                        .frame(width: 15, height: 15)
+                        .saturation(hovering ? 1 : 0.6)
+                        .scaleEffect(hovering ? 1.15 : 1)
+                        .animation(.spring(duration: 0.2, bounce: 0.5), value: hovering)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(opening)
+            .onHover { hovering = $0 }
+            .help(Text(verbatim: "Open \(host) in \(editor.name) over Remote-SSH"))
+            .accessibilityLabel(Text(verbatim: "Open \(host) in \(editor.name)"))
+        }
+    }
+
+    private func open() {
+        opening = true
+        Task {
+            defer { opening = false }
+            do { try await app.openInVSCode(host: host) } catch { report(error) }
         }
     }
 }

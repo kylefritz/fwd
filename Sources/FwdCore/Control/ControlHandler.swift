@@ -6,16 +6,19 @@ import Foundation
 public final class ControlHandler {
     private let model: AppModel
     private let open: (URL) -> Void
+    private let openInVSCode: (String) async throws -> Void
     private let switchBuild: (SwitchTarget, Double) async throws -> String
     private let pollInterval: Double
 
     public init(model: AppModel, open: @escaping (URL) -> Void,
+                openInVSCode: @escaping (String) async throws -> Void = { _ in throw VSCodeError.notInstalled },
                 switchBuild: @escaping (SwitchTarget, Double) async throws -> String = { _, _ in
                     throw SwitchError.failed("this copy of fwd can't switch builds")
                 },
                 pollInterval: Double = 0.2) {
         self.model = model
         self.open = open
+        self.openInVSCode = openInVSCode
         self.switchBuild = switchBuild
         self.pollInterval = pollInterval
     }
@@ -33,6 +36,7 @@ public final class ControlHandler {
             case "keep": return try await keep(request)
             case "connect": return try await connect(request)
             case "screen": return try await screen(request)
+            case "code": return try await code(request)
             case "try": return try await tryBuild(request)
             default: throw ControlError.usage("unknown command \(request.cmd) (try fwd --help)")
             }
@@ -215,6 +219,15 @@ public final class ControlHandler {
         let url = try await model.screenSharingURL(host: target.host)
         open(url)
         return .success(host: info(target.host), url: url.absoluteString)
+    }
+
+    private func code(_ request: ControlRequest) async throws -> ControlReply {
+        let target = try target(request, needsPorts: false)
+        guard card(target.host)?.inConfig == true else {
+            throw ControlError.failed("\(target.host) isn't in your ssh config, so VS Code can't reach it")
+        }
+        try await openInVSCode(target.host)
+        return .success(host: info(target.host))
     }
 
     /// Readies another build; the app restarts into it after answering.

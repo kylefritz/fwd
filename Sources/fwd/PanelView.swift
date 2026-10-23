@@ -123,7 +123,7 @@ extension Comparable {
 
 /// fwd's own errors read well as-is; system errors need their localized text.
 func message(for error: Error) -> String {
-    if error is PortPattern.ParseError || error is AppModelError || error is ScreenSharingError
+    if error is PortPattern.ParseError || error is AppModelError || error is ScreenSharingError || error is VSCodeError
         || error is SSHConfigFile.ExampleError { return "\(error)" }
     return error.localizedDescription
 }
@@ -298,7 +298,10 @@ struct CompactHostRow: View {
         HStack(spacing: 8) {
             Text(card.name).font(.callout).lineLimit(1).truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if card.inConfig { ScreenSharingButton(host: card.name, model: model, app: app, report: report) }
+            if card.inConfig {
+                ScreenSharingButton(host: card.name, model: model, app: app, report: report)
+                VSCodeButton(host: card.name, app: app, report: report)
+            }
             PortField(host: card.name, model: model, prompt: "port")
                 .frame(width: 130)
         }

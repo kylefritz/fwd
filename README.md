@@ -41,6 +41,8 @@ fwd does the bookkeeping:
   remote and whether a connection is open through it right now.
 - 🖥️ **One-click Screen Sharing.** Opens the remote's screen over the same ssh
   connection.
+- 🧑‍💻 **One-click VS Code.** Opens a Remote-SSH window on the host in VS Code
+  (or Cursor), or from the terminal with `fwd code devbox`.
 - 🤝 **Polite.** fwd connects while you're ssh'd into a host, or when you ask it
   to. It doesn't dial out on its own unless you pin a port to stay connected.
 
