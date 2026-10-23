@@ -452,7 +452,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// The first VS Code-like editor installed, for the host card's button.
+    /// None when fwd reads another ssh config: Remote-SSH only reads its own.
     var vsCode: (editor: VSCode.Editor, app: URL)? {
+        guard paths.sshConfigOverride == nil else { return nil }
         for editor in VSCode.editors {
             if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleID) {
                 return (editor, app)
@@ -463,6 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Opens a Remote-SSH window on `host` in VS Code (or Cursor).
     func openInVSCode(host: String) async throws {
+        if let config = paths.sshConfigOverride { throw VSCodeError.customSSHConfig(config.path) }
         guard let (editor, app) = vsCode else { throw VSCodeError.notInstalled }
         try await VSCode.open(host: host, app: app, editor: editor)
         model.log.write("opened \(editor.name)", host: host)

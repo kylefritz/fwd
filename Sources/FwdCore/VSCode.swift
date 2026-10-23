@@ -51,6 +51,7 @@ public enum VSCode {
 
 public enum VSCodeError: Error, CustomStringConvertible, Equatable {
     case notInstalled
+    case customSSHConfig(String)
     case badHost(String)
     case noCommandLine(String, String)
     case failed(String, String)
@@ -59,6 +60,8 @@ public enum VSCodeError: Error, CustomStringConvertible, Equatable {
         switch self {
         case .notInstalled:
             return "Install VS Code (or Cursor) with the Remote - SSH extension to open hosts in it."
+        case .customSSHConfig(let path):
+            return "fwd is using the ssh config at \(path), but VS Code reads its own, so it can't open hosts from it."
         case .badHost(let host): return "VS Code can't open a host named \(host)."
         case .noCommandLine(let name, let path): return "\(name)'s command line isn't at \(path)."
         case .failed(let name, let reason): return "\(name) couldn't open the host: \(reason)"
