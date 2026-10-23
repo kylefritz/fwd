@@ -58,6 +58,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release list --limit 200 --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease) | .tagName' \
+            --jq '.[] | select(.isPrerelease) | .tagName | select(test("-beta\\."))' \
             | tail -n +11 \
             | xargs -r -n1 gh release delete --yes --cleanup-tag

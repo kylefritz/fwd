@@ -16,7 +16,7 @@ public enum Invocation: Equatable {
 /// Turns `fwd`'s arguments into an invocation. Hosts and ports aren't
 /// checked here: only the app knows the hosts, so it resolves them.
 public enum CLIArguments {
-    public static let commands = ["forward", "status", "wait", "off", "remove", "keep", "connect", "screen"]
+    public static let commands = ["forward", "status", "wait", "off", "remove", "keep", "connect", "screen", "try"]
 
     public static func parse(_ args: [String]) -> Invocation {
         // A bare fwd only explains itself, so trying it has no side effects.
@@ -89,6 +89,8 @@ public enum CLIArguments {
           fwd keep [host] <port>... [--off]  keep the host connected for these ports
           fwd connect [host]                 connect a host now
           fwd screen [host]                  open the host's screen in Screen Sharing
+          fwd try <pr>|beta|stable           switch the app to a pull request's preview build,
+                                             or back to the newest beta or release
           fwd --version                      print the version
           fwd agents                         instructions to give a coding agent
 

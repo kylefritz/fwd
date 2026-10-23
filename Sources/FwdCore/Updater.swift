@@ -78,6 +78,50 @@ public enum UpdateState: Equatable, Sendable {
     case manual(version: String, page: URL?, reason: String)
 }
 
+/// A build to switch to on purpose, whether or not it's newer: a pull
+/// request's preview, or back to the newest beta or release.
+public enum SwitchTarget: Equatable, Sendable {
+    case pullRequest(Int)
+    case beta
+    case stable
+
+    /// `42`, `#42` or `pr-42`; `beta`; `stable` or `release`.
+    public init?(_ text: String) {
+        let word = text.lowercased()
+        switch word {
+        case "beta": self = .beta
+        case "stable", "release": self = .stable
+        default:
+            var number = Substring(word)
+            for prefix in ["pr-", "#"] where number.hasPrefix(prefix) { number = number.dropFirst(prefix.count) }
+            guard let n = Int(number), n > 0 else { return nil }
+            self = .pullRequest(n)
+        }
+    }
+
+    /// The release tag the preview workflow publishes a pull request under.
+    public static func tag(pullRequest: Int) -> String { "pr-\(pullRequest)" }
+}
+
+public enum SwitchError: Error, CustomStringConvertible, Equatable {
+    case notSelfUpdating(String)
+    case noPreview(Int)
+    case timedOut(Int)
+    case failed(String)
+
+    public var description: String {
+        switch self {
+        case .notSelfUpdating(let how):
+            return "this copy of fwd \(how), so it can't switch builds; install the download from GitHub to try one"
+        case .noPreview(let n):
+            return "PR #\(n) has no preview build; it appears once the Preview check on the pull request passes"
+        case .timedOut(let seconds):
+            return "the build wasn't ready after \(seconds)s, so fwd stays as it is; try again, or give it longer with --timeout"
+        case .failed(let reason): return "couldn't get the build ready: \(reason)"
+        }
+    }
+}
+
 private struct Release: Decodable {
     struct Asset: Decodable {
         let name: String
@@ -118,6 +162,11 @@ public final class Updater: ObservableObject {
     private let sendStats: () -> Bool
     private let osVersion: String
     private var staged: URL?
+    /// Bumped by `switchTo`, so a check that was already under way drops its
+    /// result instead of replacing the build the user asked for.
+    private var generation = 0
+    /// Set from `switchTo` until `install()`: no checks in between.
+    private var switchPending = false
     private let stagingDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("fwd-update-\(UUID().uuidString.prefix(8))")
 
@@ -200,6 +249,8 @@ public final class Updater: ObservableObject {
     /// Asks GitHub for the latest release and prepares it if it's newer.
     /// Network trouble is logged and otherwise ignored; the next check retries.
     public func check() async {
+        guard !switchPending else { return }
+        let token = generation
         let before = state
         // Keep a waiting "Restart to update" on screen while re-checking.
         if case .ready = before {} else { state = .checking }
@@ -210,6 +261,7 @@ public final class Updater: ObservableObject {
         Task { await self.ping(beta: beta) }
         do {
             let (release, latest) = try await newestRelease(beta: beta)
+            guard token == generation else { return }
             log.write("update check\(beta ? " (beta)" : ""): latest is \(latest), running \(currentVersion)")
 
             switch kind {
@@ -238,7 +290,7 @@ public final class Updater: ObservableObject {
                     state = before
                     return
                 }
-                await prepare(release, version: latest, fallback: before)
+                await prepare(release, version: latest, fallback: before, token: token)
             }
         } catch {
             log.write("update check failed: \(error.localizedDescription)")
@@ -308,10 +360,14 @@ public final class Updater: ObservableObject {
         state = .ready(version: onDisk.description, notes: notes)
     }
 
-    private func prepare(_ release: Release, version: Version, fallback: UpdateState) async {
+    /// Downloads and checks `release`. Its bundle must be `version`, or any
+    /// version when that's nil, as for a pull request's preview.
+    private func prepare(_ release: Release, version: Version?, fallback: UpdateState, token: Int) async {
+        let label = version?.description ?? release.tag_name
         func manual(_ reason: String) {
-            log.write("update \(version) needs a manual install: \(reason)")
-            state = .manual(version: version.description, page: release.html_url, reason: reason)
+            guard token == generation else { return }
+            log.write("update \(label) needs a manual install: \(reason)")
+            state = .manual(version: label, page: release.html_url, reason: reason)
         }
         guard FileManager.default.isWritableFile(atPath: bundleURL.deletingLastPathComponent().path) else {
             return manual("fwd's folder isn't writable")
@@ -323,9 +379,10 @@ public final class Updater: ObservableObject {
             return manual("the download isn't from \(trustedDownloads)")
         }
         do {
-            // A folder per version, so a ready update stays installable while
-            // a newer one downloads. The older folder goes once this one is in.
-            let work = stagingDir.appendingPathComponent(version.description)
+            // A folder per version and switch, so a ready update stays
+            // installable while another one downloads. The older folder goes
+            // once this one is in.
+            let work = stagingDir.appendingPathComponent("\(label)-\(token)")
             try? FileManager.default.removeItem(at: work)
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             let (downloaded, response) = try await session.download(from: asset.browser_download_url)
@@ -342,28 +399,96 @@ public final class Updater: ObservableObject {
                 return manual("the download isn't fwd")
             }
             guard let packaged = (info["CFBundleShortVersionString"] as? String).flatMap(Version.init),
-                  packaged == version else {
+                  version == nil || packaged == version else {
                 return manual("the download's version doesn't match the release")
             }
             guard await verifySignature(candidate) else {
                 return manual("the download failed its signature check")
             }
+            guard token == generation else { return }
+            // The same version again reuses `work`, which now holds the new copy.
             if let previous = staged, previous.path.hasPrefix(stagingDir.path) {
-                try? FileManager.default.removeItem(at: previous.deletingLastPathComponent().deletingLastPathComponent())
+                let folder = previous.deletingLastPathComponent().deletingLastPathComponent()
+                if folder.standardizedFileURL != work.standardizedFileURL {
+                    try? FileManager.default.removeItem(at: folder)
+                }
             }
             staged = candidate
-            log.write("update \(version) downloaded and verified")
-            state = .ready(version: version.description, notes: release.html_url)
+            log.write("update \(label) downloaded and verified")
+            state = .ready(version: packaged.description, notes: release.html_url)
         } catch {
             log.write("update download failed: \(error.localizedDescription)")
+            guard token == generation else { return }
             // A ready update is untouched, so keep offering it.
             state = (fallback == .checking) ? .idle : fallback
+        }
+    }
+
+    /// Readies `target` to install even when it's older than this copy, and
+    /// returns its version. `install()` then puts it in place, as for an
+    /// update. A build not ready within `timeout` seconds is dropped, so a
+    /// caller that gave up never sees fwd switch later.
+    public func switchTo(_ target: SwitchTarget, timeout: Double = 60) async throws -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        switch kind {
+        case .homebrew: throw SwitchError.notSelfUpdating("is managed by Homebrew")
+        case .source, .release: break
+        }
+        let release: Release
+        var version: Version?
+        do {
+            switch target {
+            case .pullRequest(let n):
+                let tag = SwitchTarget.tag(pullRequest: n)
+                var request = URLRequest(url: releasesURL.deletingLastPathComponent()
+                    .appendingPathComponent("tags").appendingPathComponent(tag))
+                request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 20
+                request.setValue("fwd/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+                let (data, response) = try await session.data(for: request)
+                switch (response as? HTTPURLResponse)?.statusCode {
+                case 200: break
+                case 404: throw SwitchError.noPreview(n)  // a tag with no release
+                case let status: throw SwitchError.failed("GitHub answered \(status.map(String.init) ?? "oddly")")
+                }
+                release = try JSONDecoder().decode(Release.self, from: data)
+            case .beta, .stable:
+                (release, version) = try await newestRelease(beta: target == .beta && releasesListURL != nil)
+            }
+        } catch let error as SwitchError {
+            throw error
+        } catch {
+            throw SwitchError.failed(error.localizedDescription)
+        }
+        log.write("switching to \(release.tag_name), running \(currentVersion)")
+        generation += 1
+        let token = generation
+        switchPending = true
+        await prepare(release, version: version, fallback: .idle, token: token)
+        guard token == generation else { throw SwitchError.failed("another fwd try replaced this one") }
+        guard Date() < deadline else {
+            // Forget the late build entirely, so nothing installs it.
+            generation += 1
+            switchPending = false
+            if let late = staged, late.path.hasPrefix(stagingDir.path) {
+                try? FileManager.default.removeItem(at: late.deletingLastPathComponent().deletingLastPathComponent())
+            }
+            staged = nil
+            state = .idle
+            throw SwitchError.timedOut(Int(timeout.rounded(.up)))
+        }
+        if case .ready = state {} else { switchPending = false }
+        switch state {
+        case .ready(let ready, _): return ready
+        case .manual(_, _, let reason): throw SwitchError.failed(reason)
+        default: throw SwitchError.failed("the download didn't finish; see the log")
         }
     }
 
     /// Puts the prepared version in place and returns the bundle to launch.
     /// The running app then relaunches from that path and quits.
     public func install() throws -> URL {
+        defer { switchPending = false }
         guard case .ready = state, let staged else { throw UpdateError.nothingReady }
         if kind == .homebrew { return staged }
         try Self.swap(newBundle: staged, into: bundleURL)

@@ -219,6 +219,14 @@ hosts:
 If `ports.yaml` can't be parsed, fwd says so, keeps running on the last good
 version and leaves your file alone. Comments are lost when fwd saves the file.
 
+### Trying a pull request
+
+Each pull request gets a preview build. `fwd try 42` swaps the app for pull
+request #42's build and restarts it; the footer shows `PR #42` while it runs.
+`fwd try beta` or `fwd try stable` goes back. A preview counts as the newest
+beta, so on the beta channel the next build of `main` replaces it as usual.
+This works for the downloaded app; a Homebrew copy can't switch builds.
+
 ## Troubleshooting
 
 <details>

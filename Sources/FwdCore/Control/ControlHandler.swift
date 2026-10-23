@@ -6,11 +6,17 @@ import Foundation
 public final class ControlHandler {
     private let model: AppModel
     private let open: (URL) -> Void
+    private let switchBuild: (SwitchTarget, Double) async throws -> String
     private let pollInterval: Double
 
-    public init(model: AppModel, open: @escaping (URL) -> Void, pollInterval: Double = 0.2) {
+    public init(model: AppModel, open: @escaping (URL) -> Void,
+                switchBuild: @escaping (SwitchTarget, Double) async throws -> String = { _, _ in
+                    throw SwitchError.failed("this copy of fwd can't switch builds")
+                },
+                pollInterval: Double = 0.2) {
         self.model = model
         self.open = open
+        self.switchBuild = switchBuild
         self.pollInterval = pollInterval
     }
 
@@ -27,6 +33,7 @@ public final class ControlHandler {
             case "keep": return try await keep(request)
             case "connect": return try await connect(request)
             case "screen": return try await screen(request)
+            case "try": return try await tryBuild(request)
             default: throw ControlError.usage("unknown command \(request.cmd) (try fwd --help)")
             }
         } catch let error as ControlError {
@@ -208,5 +215,27 @@ public final class ControlHandler {
         let url = try await model.screenSharingURL(host: target.host)
         open(url)
         return .success(host: info(target.host), url: url.absoluteString)
+    }
+
+    /// Readies another build; the app restarts into it after answering.
+    private func tryBuild(_ request: ControlRequest) async throws -> ControlReply {
+        guard request.args.count == 1, let target = SwitchTarget(request.args[0]) else {
+            throw ControlError.usage("say which build, like: fwd try 42 (a pull request), fwd try beta, fwd try stable")
+        }
+        let version: String
+        do {
+            // The command line waits 10s longer than this, so it hears either way.
+            version = try await switchBuild(target, request.timeout ?? 60)
+        } catch let error as SwitchError {
+            if case .timedOut = error { throw ControlError.timedOut("\(error)") }
+            throw ControlError.failed("\(error)")
+        }
+        let what: String
+        switch target {
+        case .pullRequest(let n): what = "PR #\(n)'s preview (\(version))"
+        case .beta: what = "the newest beta (\(version))"
+        case .stable: what = "the newest release (\(version))"
+        }
+        return .success(message: "fwd is restarting into \(what).")
     }
 }

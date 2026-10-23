@@ -190,9 +190,15 @@ public struct ControlReply: Codable, Equatable, Sendable {
     public let host: HostInfo?
     public let hosts: [HostInfo]?
     public let url: String?
+    /// A sentence for commands that report no host, like `try`.
+    public var message: String? = nil
 
     public static func success(host: HostInfo) -> ControlReply {
         ControlReply(ok: true, code: nil, error: nil, host: host, hosts: nil, url: nil)
+    }
+
+    public static func success(message: String) -> ControlReply {
+        ControlReply(ok: true, code: nil, error: nil, host: nil, hosts: nil, url: nil, message: message)
     }
 
     public static func success(hosts: [HostInfo]) -> ControlReply {
