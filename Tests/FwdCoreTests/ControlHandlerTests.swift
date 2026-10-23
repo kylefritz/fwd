@@ -139,7 +139,7 @@ import Testing
         let rig = try Rig()
         var asked: [SwitchTarget] = []
         let h = ControlHandler(model: rig.model, open: { _ in },
-                               switchBuild: { asked.append($0); return "0.2.1-beta.15" }, pollInterval: 0.02)
+                               switchBuild: { target, _ in asked.append(target); return "0.2.1-beta.15" }, pollInterval: 0.02)
         let reply = await h.handle(ControlRequest(cmd: "try", args: ["42"]))
         #expect(reply.ok, "\(reply)")
         #expect(ControlFormat.human(reply, command: "try") == "fwd is restarting into PR #42's preview (0.2.1-beta.15).")

@@ -106,6 +106,7 @@ public enum SwitchTarget: Equatable, Sendable {
 public enum SwitchError: Error, CustomStringConvertible, Equatable {
     case notSelfUpdating(String)
     case noPreview(Int)
+    case timedOut(Int)
     case failed(String)
 
     public var description: String {
@@ -114,6 +115,8 @@ public enum SwitchError: Error, CustomStringConvertible, Equatable {
             return "this copy of fwd \(how), so it can't switch builds; install the download from GitHub to try one"
         case .noPreview(let n):
             return "PR #\(n) has no preview build; it appears once the Preview check on the pull request passes"
+        case .timedOut(let seconds):
+            return "the build wasn't ready after \(seconds)s, so fwd stays as it is; try again, or give it longer with --timeout"
         case .failed(let reason): return "couldn't get the build ready: \(reason)"
         }
     }
@@ -423,8 +426,10 @@ public final class Updater: ObservableObject {
 
     /// Readies `target` to install even when it's older than this copy, and
     /// returns its version. `install()` then puts it in place, as for an
-    /// update.
-    public func switchTo(_ target: SwitchTarget) async throws -> String {
+    /// update. A build not ready within `timeout` seconds is dropped, so a
+    /// caller that gave up never sees fwd switch later.
+    public func switchTo(_ target: SwitchTarget, timeout: Double = 60) async throws -> String {
+        let deadline = Date().addingTimeInterval(timeout)
         switch kind {
         case .homebrew: throw SwitchError.notSelfUpdating("is managed by Homebrew")
         case .source, .release: break
@@ -439,11 +444,12 @@ public final class Updater: ObservableObject {
                     .appendingPathComponent("tags").appendingPathComponent(tag))
                 request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
                 request.timeoutInterval = 20
-                let data: Data
-                do {
-                    data = try await get(request)
-                } catch let error as URLError where error.code == .badServerResponse {
-                    throw SwitchError.noPreview(n)  // GitHub answers 404 for a tag with no release
+                request.setValue("fwd/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+                let (data, response) = try await session.data(for: request)
+                switch (response as? HTTPURLResponse)?.statusCode {
+                case 200: break
+                case 404: throw SwitchError.noPreview(n)  // a tag with no release
+                case let status: throw SwitchError.failed("GitHub answered \(status.map(String.init) ?? "oddly")")
                 }
                 release = try JSONDecoder().decode(Release.self, from: data)
             case .beta, .stable:
@@ -460,6 +466,17 @@ public final class Updater: ObservableObject {
         switchPending = true
         await prepare(release, version: version, fallback: .idle, token: token)
         guard token == generation else { throw SwitchError.failed("another fwd try replaced this one") }
+        guard Date() < deadline else {
+            // Forget the late build entirely, so nothing installs it.
+            generation += 1
+            switchPending = false
+            if let late = staged, late.path.hasPrefix(stagingDir.path) {
+                try? FileManager.default.removeItem(at: late.deletingLastPathComponent().deletingLastPathComponent())
+            }
+            staged = nil
+            state = .idle
+            throw SwitchError.timedOut(Int(timeout.rounded(.up)))
+        }
         if case .ready = state {} else { switchPending = false }
         switch state {
         case .ready(let ready, _): return ready

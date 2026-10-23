@@ -6,11 +6,11 @@ import Foundation
 public final class ControlHandler {
     private let model: AppModel
     private let open: (URL) -> Void
-    private let switchBuild: (SwitchTarget) async throws -> String
+    private let switchBuild: (SwitchTarget, Double) async throws -> String
     private let pollInterval: Double
 
     public init(model: AppModel, open: @escaping (URL) -> Void,
-                switchBuild: @escaping (SwitchTarget) async throws -> String = { _ in
+                switchBuild: @escaping (SwitchTarget, Double) async throws -> String = { _, _ in
                     throw SwitchError.failed("this copy of fwd can't switch builds")
                 },
                 pollInterval: Double = 0.2) {
@@ -222,7 +222,14 @@ public final class ControlHandler {
         guard request.args.count == 1, let target = SwitchTarget(request.args[0]) else {
             throw ControlError.usage("say which build, like: fwd try 42 (a pull request), fwd try beta, fwd try stable")
         }
-        let version = try await switchBuild(target)
+        let version: String
+        do {
+            // The command line waits 10s longer than this, so it hears either way.
+            version = try await switchBuild(target, request.timeout ?? 60)
+        } catch let error as SwitchError {
+            if case .timedOut = error { throw ControlError.timedOut("\(error)") }
+            throw ControlError.failed("\(error)")
+        }
         let what: String
         switch target {
         case .pullRequest(let n): what = "PR #\(n)'s preview (\(version))"

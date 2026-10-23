@@ -362,9 +362,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// works; only the command can't reach it.
     private func startControlServer() {
         let handler = ControlHandler(model: model, open: { NSWorkspace.shared.open($0) },
-                                     switchBuild: { [weak self] target in
+                                     switchBuild: { [weak self] target, timeout in
                                          guard let self else { throw SwitchError.failed("fwd is quitting") }
-                                         return try await self.switchBuild(to: target)
+                                         return try await self.switchBuild(to: target, timeout: timeout)
                                      })
         let server = ControlServer(path: paths.controlSocket.path) { await handler.handle($0) }
         do {
@@ -452,8 +452,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// `fwd try`: readies the build, then restarts into it a moment after
     /// returning, so the command line gets its answer first.
-    func switchBuild(to target: SwitchTarget) async throws -> String {
-        let version = try await updater.switchTo(target)
+    func switchBuild(to target: SwitchTarget, timeout: Double) async throws -> String {
+        let version = try await updater.switchTo(target, timeout: timeout)
         Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
             restartToUpdate()

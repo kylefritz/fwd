@@ -612,4 +612,26 @@ final class TestHTTPServer: @unchecked Sendable {
         _ = try u.install()
         #expect(try String(contentsOf: installed.appendingPathComponent("Contents/marker"), encoding: .utf8) == "pr")
     }
+
+    @Test func onlyAMissingReleaseMeansNoPreview() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.0")
+        server.route("/tags/pr-42", status: 403, body: Data("rate limited".utf8))
+        let u = updater(server, installed: installed, version: "0.2.0")
+        await #expect(throws: SwitchError.failed("GitHub answered 403")) { try await u.switchTo(.pullRequest(42)) }
+    }
+
+    @Test func aBuildReadyTooLateIsDropped() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.0", marker: "old")
+        let preview = try makeBundle(in: work.appendingPathComponent("build"), version: "0.2.1-beta.15", marker: "pr")
+        server.route("/tags/pr-42", body: releaseJSON(tag: "pr-42", server: server))
+        server.route("/fwd.zip", body: try await zip(preview))
+        let u = updater(server, installed: installed, version: "0.2.0")
+        await #expect(throws: SwitchError.timedOut(0)) { try await u.switchTo(.pullRequest(42), timeout: 0) }
+        #expect(throws: Updater.UpdateError.self) { try u.install() }
+        #expect(try String(contentsOf: installed.appendingPathComponent("Contents/marker"), encoding: .utf8) == "old")
+    }
 }
