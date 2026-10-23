@@ -46,7 +46,9 @@ jobs:
           beta=$(git tag --list "v$next-beta.*" | sed "s/^v$next-beta\.//" | sort -n | tail -1)
           echo "VERSION=$next-beta.${beta:-0}" >> "$GITHUB_ENV"
       - name: Build the app
-        run: make app VERSION="$VERSION" PREVIEW="PR #$PR"
+        # A block, since " #" in a plain YAML value starts a comment.
+        run: |
+          make app VERSION="$VERSION" PREVIEW="PR #$PR"
       - name: Check the bundle
         run: |
           test "$(build/fwd.app/Contents/Resources/bin/fwd --version)" = "$VERSION"
