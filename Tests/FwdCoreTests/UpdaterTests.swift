@@ -581,4 +581,35 @@ final class TestHTTPServer: @unchecked Sendable {
         }
         #expect(server.hits.isEmpty)
     }
+
+    @Test func tryingTheSameBuildTwiceKeepsItInstallable() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.0", marker: "old")
+        let preview = try makeBundle(in: work.appendingPathComponent("build"), version: "0.2.1-beta.15", marker: "pr")
+        server.route("/tags/pr-42", body: releaseJSON(tag: "pr-42", server: server))
+        server.route("/fwd.zip", body: try await zip(preview))
+        let u = updater(server, installed: installed, version: "0.2.0")
+        _ = try await u.switchTo(.pullRequest(42))
+        _ = try await u.switchTo(.pullRequest(42))
+        _ = try u.install()
+        #expect(try String(contentsOf: installed.appendingPathComponent("Contents/marker"), encoding: .utf8) == "pr")
+    }
+
+    @Test func anUpdateCheckDoesntReplaceTheBuildBeingTried() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.0", marker: "old")
+        let preview = try makeBundle(in: work.appendingPathComponent("build"), version: "0.2.1-beta.15", marker: "pr")
+        server.route("/tags/pr-42", body: releaseJSON(tag: "pr-42", server: server))
+        // A release newer than the preview, which a check would offer.
+        server.route("/latest", body: releaseJSON(tag: "v0.3.0", server: server))
+        server.route("/fwd.zip", body: try await zip(preview))
+        let u = updater(server, installed: installed, version: "0.2.0")
+        _ = try await u.switchTo(.pullRequest(42))
+        await u.check()
+        #expect(u.state == .ready(version: "0.2.1-beta.15", notes: URL(string: "https://example.com/notes")))
+        _ = try u.install()
+        #expect(try String(contentsOf: installed.appendingPathComponent("Contents/marker"), encoding: .utf8) == "pr")
+    }
 }
