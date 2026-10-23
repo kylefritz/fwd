@@ -97,14 +97,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The footer's version: a dev build shows its commit, since "dev" alone
     /// doesn't say which code is running.
+    /// The pull request a preview build came from, like `PR #42`.
+    static var preview: String? {
+        (Bundle.main.infoDictionary?["FwdPreview"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     static var displayVersion: String {
+        if let preview { return "v\(version) · \(preview)" }
         guard version == "dev" else { return "v\(version)" }
         return commit.map { "dev · \($0)" } ?? "dev build"
     }
 
     /// The version a bug report gives, with the commit when there is one.
     static var reportVersion: String {
-        commit.map { "\(version) (\($0))" } ?? version
+        let base = commit.map { "\(version) (\($0))" } ?? version
+        return preview.map { "\(base) \($0)" } ?? base
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -354,7 +361,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Lets the `fwd` command line drive the app. Without it the app still
     /// works; only the command can't reach it.
     private func startControlServer() {
-        let handler = ControlHandler(model: model, open: { NSWorkspace.shared.open($0) })
+        let handler = ControlHandler(model: model, open: { NSWorkspace.shared.open($0) },
+                                     switchBuild: { [weak self] target in
+                                         guard let self else { throw SwitchError.failed("fwd is quitting") }
+                                         return try await self.switchBuild(to: target)
+                                     })
         let server = ControlServer(path: paths.controlSocket.path) { await handler.handle($0) }
         do {
             try SSHConnection.prepareSocketDir(paths.socketDir)
@@ -437,6 +448,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func open(_ url: URL) {
         NSWorkspace.shared.open(url)
+    }
+
+    /// `fwd try`: readies the build, then restarts into it a moment after
+    /// returning, so the command line gets its answer first.
+    func switchBuild(to target: SwitchTarget) async throws -> String {
+        let version = try await updater.switchTo(target)
+        Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            restartToUpdate()
+        }
+        return version
     }
 
     /// Switches to the prepared update: launch the new copy once this one

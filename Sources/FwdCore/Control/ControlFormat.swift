@@ -10,6 +10,7 @@ public enum ControlFormat {
     public static func human(_ reply: ControlReply, command: String) -> String {
         guard reply.ok else { return "fwd: \(reply.error ?? "something went wrong")" }
         if let url = reply.url { return url }
+        if let message = reply.message { return message }
         if let hosts = reply.hosts {
             if hosts.isEmpty { return "No hosts with ports. Forward one with: fwd <host> <port>" }
             return hosts.map { host in

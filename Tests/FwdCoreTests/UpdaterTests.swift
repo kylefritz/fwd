@@ -521,4 +521,64 @@ final class TestHTTPServer: @unchecked Sendable {
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: installed.deletingLastPathComponent().path)
         #expect(leftovers == ["fwd.app"])
     }
+
+    // MARK: fwd try
+
+    @Test func readsWhichBuildToSwitchTo() {
+        #expect(SwitchTarget("42") == .pullRequest(42))
+        #expect(SwitchTarget("#42") == .pullRequest(42))
+        #expect(SwitchTarget("pr-42") == .pullRequest(42))
+        #expect(SwitchTarget("beta") == .beta)
+        #expect(SwitchTarget("Release") == .stable)
+        #expect(SwitchTarget("stable") == .stable)
+        #expect(SwitchTarget("0") == nil)
+        #expect(SwitchTarget("main") == nil)
+    }
+
+    @Test func switchesToAPullRequestsPreviewEvenWhenItIsntNewer() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.1-beta.15", marker: "beta")
+        // Previews carry the newest beta's version, so it's no newer.
+        let preview = try makeBundle(in: work.appendingPathComponent("build"), version: "0.2.1-beta.15", marker: "pr")
+        server.route("/tags/pr-42", body: releaseJSON(tag: "pr-42", server: server))
+        server.route("/fwd.zip", body: try await zip(preview))
+        let u = updater(server, installed: installed, version: "0.2.1-beta.15")
+        #expect(try await u.switchTo(.pullRequest(42)) == "0.2.1-beta.15")
+        #expect(try u.install() == installed)
+        #expect(try String(contentsOf: installed.appendingPathComponent("Contents/marker"), encoding: .utf8) == "pr")
+    }
+
+    @Test func switchesBackToAnOlderRelease() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.1-beta.15")
+        let release = try makeBundle(in: work.appendingPathComponent("build"), version: "0.2.0")
+        server.route("/latest", body: releaseJSON(tag: "v0.2.0", server: server))
+        server.route("/fwd.zip", body: try await zip(release))
+        let u = updater(server, installed: installed, version: "0.2.1-beta.15")
+        #expect(try await u.switchTo(.stable) == "0.2.0")
+        _ = try u.install()
+        #expect(Updater.bundleVersion(installed) == "0.2.0")
+    }
+
+    @Test func aPullRequestWithoutAPreviewSaysSo() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.0")
+        let u = updater(server, installed: installed, version: "0.2.0")
+        await #expect(throws: SwitchError.noPreview(7)) { try await u.switchTo(.pullRequest(7)) }
+        #expect(Updater.bundleVersion(installed) == "0.2.0")
+    }
+
+    @Test func homebrewCopiesDontSwitch() async throws {
+        let server = try TestHTTPServer()
+        defer { server.stop() }
+        let installed = try makeBundle(in: work.appendingPathComponent("Applications"), version: "0.2.0")
+        let u = updater(server, installed: installed, version: "0.2.0", kind: .homebrew)
+        await #expect(throws: SwitchError.notSelfUpdating("is managed by Homebrew")) {
+            try await u.switchTo(.pullRequest(42))
+        }
+        #expect(server.hits.isEmpty)
+    }
 }

@@ -1,10 +1,12 @@
 #!/bin/sh
 # Assembles build/fwd.app from the release build and ad-hoc signs it.
 # Usage: VERSION=1.2.3 scripts/bundle.sh   (VERSION defaults to "dev")
+# PREVIEW="PR #42" marks a pull request's preview build in the footer.
 set -eu
 
 cd "$(dirname "$0")/.."
 VERSION="${VERSION:-dev}"
+PREVIEW="${PREVIEW:-}"
 # Not `swift build --show-bin-path`: that starts SwiftPM's sandbox, which
 # fails inside Homebrew's own build sandbox.
 BINARY=".build/release/fwd"
@@ -50,6 +52,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>FwdCommit</key><string>${COMMIT}</string>
+  <key>FwdPreview</key><string>${PREVIEW}</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSUIElement</key><true/>

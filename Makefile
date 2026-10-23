@@ -19,7 +19,7 @@ test:
 	swift test $(TEST_FLAGS) $(TEST_ARGS)
 
 app: build
-	VERSION=$(VERSION) scripts/bundle.sh
+	VERSION=$(VERSION) PREVIEW="$(PREVIEW)" scripts/bundle.sh
 
 install: app
 	rm -rf "$(PREFIX)/fwd.app"

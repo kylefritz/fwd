@@ -78,6 +78,47 @@ public enum UpdateState: Equatable, Sendable {
     case manual(version: String, page: URL?, reason: String)
 }
 
+/// A build to switch to on purpose, whether or not it's newer: a pull
+/// request's preview, or back to the newest beta or release.
+public enum SwitchTarget: Equatable, Sendable {
+    case pullRequest(Int)
+    case beta
+    case stable
+
+    /// `42`, `#42` or `pr-42`; `beta`; `stable` or `release`.
+    public init?(_ text: String) {
+        let word = text.lowercased()
+        switch word {
+        case "beta": self = .beta
+        case "stable", "release": self = .stable
+        default:
+            var number = Substring(word)
+            for prefix in ["pr-", "#"] where number.hasPrefix(prefix) { number = number.dropFirst(prefix.count) }
+            guard let n = Int(number), n > 0 else { return nil }
+            self = .pullRequest(n)
+        }
+    }
+
+    /// The release tag the preview workflow publishes a pull request under.
+    public static func tag(pullRequest: Int) -> String { "pr-\(pullRequest)" }
+}
+
+public enum SwitchError: Error, CustomStringConvertible, Equatable {
+    case notSelfUpdating(String)
+    case noPreview(Int)
+    case failed(String)
+
+    public var description: String {
+        switch self {
+        case .notSelfUpdating(let how):
+            return "this copy of fwd \(how), so it can't switch builds; install the download from GitHub to try one"
+        case .noPreview(let n):
+            return "PR #\(n) has no preview build; it appears once the Preview check on the pull request passes"
+        case .failed(let reason): return "couldn't get the build ready: \(reason)"
+        }
+    }
+}
+
 private struct Release: Decodable {
     struct Asset: Decodable {
         let name: String
@@ -308,10 +349,13 @@ public final class Updater: ObservableObject {
         state = .ready(version: onDisk.description, notes: notes)
     }
 
-    private func prepare(_ release: Release, version: Version, fallback: UpdateState) async {
+    /// Downloads and checks `release`. Its bundle must be `version`, or any
+    /// version when that's nil, as for a pull request's preview.
+    private func prepare(_ release: Release, version: Version?, fallback: UpdateState) async {
+        let label = version?.description ?? release.tag_name
         func manual(_ reason: String) {
-            log.write("update \(version) needs a manual install: \(reason)")
-            state = .manual(version: version.description, page: release.html_url, reason: reason)
+            log.write("update \(label) needs a manual install: \(reason)")
+            state = .manual(version: label, page: release.html_url, reason: reason)
         }
         guard FileManager.default.isWritableFile(atPath: bundleURL.deletingLastPathComponent().path) else {
             return manual("fwd's folder isn't writable")
@@ -325,7 +369,7 @@ public final class Updater: ObservableObject {
         do {
             // A folder per version, so a ready update stays installable while
             // a newer one downloads. The older folder goes once this one is in.
-            let work = stagingDir.appendingPathComponent(version.description)
+            let work = stagingDir.appendingPathComponent(label)
             try? FileManager.default.removeItem(at: work)
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             let (downloaded, response) = try await session.download(from: asset.browser_download_url)
@@ -342,7 +386,7 @@ public final class Updater: ObservableObject {
                 return manual("the download isn't fwd")
             }
             guard let packaged = (info["CFBundleShortVersionString"] as? String).flatMap(Version.init),
-                  packaged == version else {
+                  version == nil || packaged == version else {
                 return manual("the download's version doesn't match the release")
             }
             guard await verifySignature(candidate) else {
@@ -352,12 +396,54 @@ public final class Updater: ObservableObject {
                 try? FileManager.default.removeItem(at: previous.deletingLastPathComponent().deletingLastPathComponent())
             }
             staged = candidate
-            log.write("update \(version) downloaded and verified")
-            state = .ready(version: version.description, notes: release.html_url)
+            log.write("update \(label) downloaded and verified")
+            state = .ready(version: packaged.description, notes: release.html_url)
         } catch {
             log.write("update download failed: \(error.localizedDescription)")
             // A ready update is untouched, so keep offering it.
             state = (fallback == .checking) ? .idle : fallback
+        }
+    }
+
+    /// Readies `target` to install even when it's older than this copy, and
+    /// returns its version. `install()` then puts it in place, as for an
+    /// update.
+    public func switchTo(_ target: SwitchTarget) async throws -> String {
+        switch kind {
+        case .homebrew: throw SwitchError.notSelfUpdating("is managed by Homebrew")
+        case .source, .release: break
+        }
+        let release: Release
+        var version: Version?
+        do {
+            switch target {
+            case .pullRequest(let n):
+                let tag = SwitchTarget.tag(pullRequest: n)
+                var request = URLRequest(url: releasesURL.deletingLastPathComponent()
+                    .appendingPathComponent("tags").appendingPathComponent(tag))
+                request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 20
+                let data: Data
+                do {
+                    data = try await get(request)
+                } catch let error as URLError where error.code == .badServerResponse {
+                    throw SwitchError.noPreview(n)  // GitHub answers 404 for a tag with no release
+                }
+                release = try JSONDecoder().decode(Release.self, from: data)
+            case .beta, .stable:
+                (release, version) = try await newestRelease(beta: target == .beta && releasesListURL != nil)
+            }
+        } catch let error as SwitchError {
+            throw error
+        } catch {
+            throw SwitchError.failed(error.localizedDescription)
+        }
+        log.write("switching to \(release.tag_name), running \(currentVersion)")
+        await prepare(release, version: version, fallback: .idle)
+        switch state {
+        case .ready(let ready, _): return ready
+        case .manual(_, _, let reason): throw SwitchError.failed(reason)
+        default: throw SwitchError.failed("the download didn't finish; see the log")
         }
     }
 

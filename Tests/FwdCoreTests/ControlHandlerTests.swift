@@ -134,4 +134,20 @@ import Testing
         #expect(await h.handle(old).exitCode == .unreachable)
         await rig.model.shutdown()
     }
+
+    @Test func trySwitchesBuildsAndExplainsItself() async throws {
+        let rig = try Rig()
+        var asked: [SwitchTarget] = []
+        let h = ControlHandler(model: rig.model, open: { _ in },
+                               switchBuild: { asked.append($0); return "0.2.1-beta.15" }, pollInterval: 0.02)
+        let reply = await h.handle(ControlRequest(cmd: "try", args: ["42"]))
+        #expect(reply.ok, "\(reply)")
+        #expect(ControlFormat.human(reply, command: "try") == "fwd is restarting into PR #42's preview (0.2.1-beta.15).")
+        #expect(await h.handle(ControlRequest(cmd: "try", args: ["beta"])).ok)
+        #expect(asked == [.pullRequest(42), .beta])
+
+        #expect(await h.handle(ControlRequest(cmd: "try", args: [])).exitCode == .usage)
+        #expect(await h.handle(ControlRequest(cmd: "try", args: ["main"])).exitCode == .usage)
+        #expect(asked.count == 2)
+    }
 }

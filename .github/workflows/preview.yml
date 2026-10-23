@@ -1,0 +1,78 @@
+name: Preview
+
+# Every push to a pull request publishes its app as a prerelease tagged
+# pr-<number>, replaced on each push and deleted when the pull request
+# closes. Try it with `fwd try <number>`; `fwd try beta` goes back.
+#
+# The updater never offers these: their tags aren't versions, so it skips
+# them. The build carries the newest beta's version, so the beta channel
+# leaves it alone until the next beta, then offers that as usual.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  TAG: pr-${{ github.event.pull_request.number }}
+  PR: ${{ github.event.pull_request.number }}
+
+jobs:
+  publish:
+    # A fork's pull request gets a read-only token, so it can't publish.
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-26
+    env:
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Version
+        run: |
+          # The same next-patch version beta.yml uses, numbered like the
+          # newest beta of it (0 before there is one).
+          last=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -v -e '-' | head -1)
+          IFS=. read -r major minor patch <<< "${last:-v0.0.0}"
+          next="${major#v}.$minor.$((patch + 1))"
+          beta=$(git tag --list "v$next-beta.*" | sed "s/^v$next-beta\.//" | sort -n | tail -1)
+          echo "VERSION=$next-beta.${beta:-0}" >> "$GITHUB_ENV"
+      - name: Build the app
+        run: make app VERSION="$VERSION" PREVIEW="PR #$PR"
+      - name: Check the bundle
+        run: |
+          test "$(build/fwd.app/Contents/Resources/bin/fwd --version)" = "$VERSION"
+          codesign --verify --deep --strict build/fwd.app
+      - name: Publish the preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Replaced whole, so the tag moves to the new commit.
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" build/fwd.zip --prerelease --target "$SHA" \
+            --title "fwd PR #$PR preview" \
+            --notes "Preview of #$PR built from ${SHA:0:7} as $VERSION. Try it with \`fwd try $PR\`; \`fwd try beta\` goes back."
+      - name: Say how to try it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="**Try this build:** \`fwd try $PR\` (${SHA:0:7}, $VERSION). \`fwd try beta\` goes back."
+          # Edits the bot's earlier comment instead of adding one per push.
+          gh pr comment "$PR" --edit-last --create-if-none --body "$body"
+
+  cleanup:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
