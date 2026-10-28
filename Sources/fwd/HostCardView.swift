@@ -232,27 +232,44 @@ struct VSCodeButton: View {
     }
 }
 
-/// An app's Finder icon, in color or gray, made once per app.
+/// An app's Finder icon, in color or gray, made once per app. Both come
+/// from one bitmap: an icon holds several sizes with different margins, so
+/// letting each pick its own would change the art's size on hover.
 @MainActor
 enum AppIcon {
     private static var cache: [String: NSImage] = [:]
+    private static let pixels = 64
 
     static func image(_ app: URL, gray: Bool) -> NSImage {
         let key = "\(app.path)|\(gray)"
         if let cached = cache[key] { return cached }
-        var icon = NSWorkspace.shared.icon(forFile: app.path)
-        if gray, let mono = grayscale(icon) { icon = mono }
-        cache[key] = icon
-        return icon
+        let color = cache[app.path] ?? bitmap(NSWorkspace.shared.icon(forFile: app.path))
+        cache[app.path] = color
+        let image = gray ? (grayscale(color) ?? color) : color
+        cache[key] = image
+        return image
+    }
+
+    private static func bitmap(_ icon: NSImage) -> NSImage {
+        let size = NSSize(width: pixels, height: pixels)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels,
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return icon }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        icon.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: size)
+        image.addRepresentation(rep)
+        return image
     }
 
     private static func grayscale(_ image: NSImage) -> NSImage? {
-        guard let tiff = image.tiffRepresentation, let input = CIImage(data: tiff),
+        guard let rep = image.representations.first as? NSBitmapImageRep, let input = CIImage(bitmapImageRep: rep),
               let output = CIFilter(name: "CIPhotoEffectMono", parameters: [kCIInputImageKey: input])?.outputImage
         else { return nil }
-        let rep = NSCIImageRep(ciImage: output)
         let gray = NSImage(size: image.size)
-        gray.addRepresentation(rep)
+        gray.addRepresentation(NSCIImageRep(ciImage: output))
         return gray
     }
 }
