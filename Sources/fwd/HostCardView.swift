@@ -202,12 +202,17 @@ struct VSCodeButton: View {
                 if opening {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: bundle.path))
-                        .resizable().interpolation(.high)
-                        .frame(width: 15, height: 15)
-                        .saturation(hovering ? 1 : 0.6)
-                        .scaleEffect(hovering ? 1.15 : 1)
-                        .animation(.spring(duration: 0.2, bounce: 0.5), value: hovering)
+                    // A hidden symbol sets the size and baseline, so the icon
+                    // lines up with Screen Sharing's symbol in any font.
+                    Image(systemName: "square").hidden()
+                        .overlay {
+                            // Gray until hovered. App icons leave a margin
+                            // around their art, so it's drawn a bit larger.
+                            Image(nsImage: AppIcon.image(bundle, gray: !hovering))
+                                .resizable().interpolation(.high).scaledToFit()
+                                .scaleEffect(1.25)
+                                .opacity(hovering ? 1 : 0.75)
+                        }
                 }
             }
             .buttonStyle(.plain)
@@ -224,6 +229,31 @@ struct VSCodeButton: View {
             defer { opening = false }
             do { try await app.openInVSCode(host: host) } catch { report(error) }
         }
+    }
+}
+
+/// An app's Finder icon, in color or gray, made once per app.
+@MainActor
+enum AppIcon {
+    private static var cache: [String: NSImage] = [:]
+
+    static func image(_ app: URL, gray: Bool) -> NSImage {
+        let key = "\(app.path)|\(gray)"
+        if let cached = cache[key] { return cached }
+        var icon = NSWorkspace.shared.icon(forFile: app.path)
+        if gray, let mono = grayscale(icon) { icon = mono }
+        cache[key] = icon
+        return icon
+    }
+
+    private static func grayscale(_ image: NSImage) -> NSImage? {
+        guard let tiff = image.tiffRepresentation, let input = CIImage(data: tiff),
+              let output = CIFilter(name: "CIPhotoEffectMono", parameters: [kCIInputImageKey: input])?.outputImage
+        else { return nil }
+        let rep = NSCIImageRep(ciImage: output)
+        let gray = NSImage(size: image.size)
+        gray.addRepresentation(rep)
+        return gray
     }
 }
 
