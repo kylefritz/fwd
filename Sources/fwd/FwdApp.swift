@@ -177,16 +177,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// Like `--snapshot`, but draws the menu bar panel at the size it picks for itself.
-    /// `--light` draws it in light mode whatever the system uses.
+    /// Like `--snapshot`, but draws the menu bar panel at the size it picks for itself,
+    /// at 2x whatever the screen. `--light` draws it in light mode whatever the system uses.
     private func snapshotPanel(to file: URL, _ content: AnyView? = nil) {
         let view = NSHostingView(rootView:
             (content ?? AnyView(PanelView(model: model, updater: updater, app: self, inWindow: false)
                 .frame(width: 440)))
                 .background(.windowBackground))
         if CommandLine.arguments.contains("--light") { view.appearance = NSAppearance(named: .aqua) }
-        let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 100),
-                         styleMask: [.borderless], backing: .buffered, defer: false)
+        let w = RetinaWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 100),
+                               styleMask: [.borderless], backing: .buffered, defer: false)
         w.contentView = view
         w.orderFrontRegardless()
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
@@ -453,8 +453,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The first VS Code-like editor installed, for the host card's button.
     /// None when fwd reads another ssh config: Remote-SSH only reads its own.
+    /// The README screenshot is drawn from a demo config, so it keeps the button.
     var vsCode: (editor: VSCode.Editor, app: URL)? {
-        guard paths.sshConfigOverride == nil else { return nil }
+        guard paths.sshConfigOverride == nil || CommandLine.arguments.contains("--snapshot-hero") else { return nil }
         for editor in VSCode.editors {
             if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleID) {
                 return (editor, app)

@@ -1,6 +1,11 @@
 import AppKit
 import SwiftUI
 
+/// Draws at 2x on any screen, so snapshots taken on a 1x display stay sharp.
+final class RetinaWindow: NSWindow {
+    override var backingScaleFactor: CGFloat { 2 }
+}
+
 /// For the README: the panel hanging from fwd's icon in a menu bar, drawn
 /// by `--snapshot-hero`. The bar's other items are stand-ins; the icon and
 /// the panel are the app's own.
