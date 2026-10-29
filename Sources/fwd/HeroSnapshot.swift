@@ -63,8 +63,9 @@ struct HeroSnapshot<Panel: View>: View {
     }
 }
 
-/// `--snapshot-herdr`: the VS Code button's menu in each state, side by side,
-/// the middle one listing this Mac's own herdr. For checking the layout.
+/// `--snapshot-herdr`: the VS Code button's menu in each state, side by side:
+/// this Mac's own herdr, and a list too long to fit, which scrolls. For
+/// checking the layout.
 struct HerdrSnapshot: View {
     @State private var live: Herdr.Listing?
 
@@ -74,6 +75,7 @@ struct HerdrSnapshot: View {
             menu(live)
             menu(.notInstalled)
             menu(.notRunning)
+            menu(.found(Self.long))
         }
         .padding(16)
         .task {
@@ -81,6 +83,14 @@ struct HerdrSnapshot: View {
             live = Herdr.parse(result.stdout)
         }
     }
+
+    /// More agents and folders than fit on a screen.
+    private static let long = Herdr.Found(
+        agents: (1...30).map {
+            Herdr.Agent(id: "\($0)", title: "agent \($0)", path: "/home/me/repo-\($0)",
+                        display: "~/repo-\($0)", status: $0 % 7 == 0 ? .blocked : .agent)
+        },
+        folders: (1...30).map { Herdr.Directory(path: "/home/me/repo-\($0)", display: "~/repo-\($0)") })
 
     private func menu(_ listing: Herdr.Listing?) -> some View {
         HerdrMenu(host: "devbox", editor: "VS Code", listing: listing, open: { _ in })

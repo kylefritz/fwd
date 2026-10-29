@@ -24,6 +24,14 @@ public enum Herdr {
         public let display: String
         public let status: Status
 
+        public init(id: String, title: String, path: String, display: String, status: Status) {
+            self.id = id
+            self.title = title
+            self.path = path
+            self.display = display
+            self.status = status
+        }
+
         public var folderName: String { Herdr.name(display) }
     }
 
@@ -38,12 +46,24 @@ public enum Herdr {
         public var branch: String? = nil
         public var id: String { path }
 
+        public init(path: String, display: String, worktreeOf: String? = nil, branch: String? = nil) {
+            self.path = path
+            self.display = display
+            self.worktreeOf = worktreeOf
+            self.branch = branch
+        }
+
         public var name: String { Herdr.name(display) }
     }
 
     public struct Found: Equatable, Sendable {
         public var agents: [Agent]
         public var folders: [Directory]
+
+        public init(agents: [Agent], folders: [Directory]) {
+            self.agents = agents
+            self.folders = folders
+        }
     }
 
     public enum Listing: Equatable, Sendable {

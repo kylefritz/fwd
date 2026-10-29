@@ -18,6 +18,23 @@ Log enough to answer "why did it show that?" from the log alone. Never log
 secrets. The log is `~/Library/Logs/fwd/fwd.log` (`$FWD_HOME/logs/fwd.log`
 when `FWD_HOME` is set), and it's what the Report a Bug window attaches.
 
+## Check pull requests for bot reviews
+
+Bots review pull requests here: GitHub Copilot, and Codex (the
+`chatgpt-codex-connector` app), which leaves inline comments with a
+priority badge like P2. After each push to a pull request, and again
+before merging, read what they left:
+
+```sh
+gh pr view 42 --json reviews,comments    # reviews and top-level comments
+gh api repos/kylefritz/fwd/pulls/42/comments --jq '.[] | "\(.user.login) \(.path):\(.line) \(.body)"'
+```
+
+The second command lists the inline comments on lines of code, where most
+bot findings land; `gh pr view` doesn't show those. Bots can take a few
+minutes after a push, so check again once CI is done. Fix each finding that
+holds up, or say in the pull request why it doesn't, before merging.
+
 ## Pull requests need screenshots
 
 A pull request that changes anything you can see includes screenshots in its
@@ -33,7 +50,7 @@ The app can draw itself with no one at the screen. After `swift build`:
 | `.build/debug/fwd --snapshot-panel out.png` | the menu bar panel |
 | `--snapshot-hero out.png` | the README picture (run it against a demo ssh config) |
 | `--snapshot-report out.png` | the Report a Bug window |
-| `--snapshot-herdr out.png` | the VS Code button's menu in each state |
+| `--snapshot-herdr out.png` | the VS Code button's menu in each state, and a list long enough to scroll |
 | `--light` | any of these in light mode |
 
 Run snapshots with `FWD_HOME` pointed at a scratch folder and

@@ -321,6 +321,23 @@ struct HerdrMenu: View {
         case .failed(let why)?:
             note { Text(why).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
         case .found(let found)?:
+            // Unlike a real menu, a popover can't scroll past the screen's
+            // edge, so a long list scrolls inside it. A short one takes its
+            // own height, since the menu is sized to fit.
+            ScrollView(.vertical) {
+                rows(found)
+            }
+            .frame(maxHeight: Self.maxListHeight)
+        }
+    }
+
+    /// At most 480pt, or 60% of the screen on a small one.
+    private static var maxListHeight: CGFloat {
+        min(480, (NSScreen.main?.visibleFrame.height ?? 800) * 0.6)
+    }
+
+    private func rows(_ found: Herdr.Found) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
             if found.agents.isEmpty {
                 note { Text("No agents running in herdr") }
             }
