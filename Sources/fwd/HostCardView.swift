@@ -315,28 +315,31 @@ struct HerdrMenu: View {
             note { Text(verbatim: "herdr isn't running on \(host)") }
         case .failed(let why)?:
             note { Text(why).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
-        case .directories(let dirs)?:
-            if dirs.isEmpty {
-                note { Text("No panes open in herdr") }
-            } else {
-                ForEach(dirs) { dir in
+        case .found(let found)?:
+            if found.agents.isEmpty {
+                note { Text("No agents running in herdr") }
+            }
+            ForEach(found.agents) { agent in
+                MenuRow(action: { open(agent.path) }, help: "Open \(agent.path) in \(editor)") {
+                    HerdrDot(status: agent.status)
+                    Text(agent.title).lineLimit(1)
+                    Spacer(minLength: 16)
+                    Text(agent.folderName).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            if !found.folders.isEmpty {
+                Text("Folders").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 2)
+                ForEach(found.folders) { dir in
                     MenuRow(action: { open(dir.path) }, help: "Open \(dir.path) in \(editor)") {
-                        if dir.worktreeOf != nil {
-                            // A worktree of the folder above it.
-                            Image(systemName: "arrow.triangle.branch").font(.caption2)
-                                .foregroundStyle(.secondary).frame(width: 7)
-                                .padding(.leading, 12)
-                                .accessibilityLabel("worktree")
-                            Text(dir.name).lineLimit(1)
-                            Spacer(minLength: 12)
-                            Text(dir.branch ?? dir.display).foregroundStyle(.secondary)
-                                .lineLimit(1).truncationMode(.middle)
-                        } else {
-                            HerdrDot(status: dir.status)
-                            Text(dir.name).lineLimit(1)
-                            Spacer(minLength: 12)
-                            Text(dir.display).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
-                        }
+                        // Worktrees sit under their repo's main checkout.
+                        Image(systemName: dir.worktreeOf == nil ? "folder" : "arrow.triangle.branch")
+                            .font(.caption).foregroundStyle(.secondary).frame(width: 12)
+                            .padding(.leading, dir.worktreeOf == nil ? 0 : 12)
+                            .accessibilityLabel(dir.worktreeOf == nil ? "folder" : "worktree")
+                        Text(dir.name).lineLimit(1)
+                        Spacer(minLength: 16)
+                        Text(dir.branch ?? dir.display).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
             }
@@ -373,8 +376,7 @@ private struct MenuRow<Label: View>: View {
     }
 }
 
-/// Green: an agent is running there. Orange: one is waiting on you. Gray:
-/// a pane is open with no agent.
+/// Green: the agent is running. Orange: it's waiting on you.
 struct HerdrDot: View {
     let status: Herdr.Status
 
@@ -382,7 +384,6 @@ struct HerdrDot: View {
         let (color, words): (Color, String) = switch status {
         case .agent: (.green, "agent running")
         case .blocked: (.orange, "agent waiting on you")
-        case .none: (.gray, "no agent")
         }
         Circle().fill(color).frame(width: 7, height: 7)
             .help(words)

@@ -4,17 +4,25 @@ import Testing
 import Yams
 
 @Suite struct HerdrTests {
+    struct P {
+        var id = "w1:p1"
+        var cwd: String
+        var agent: String? = nil
+        var status: String? = nil
+        var title: String? = nil
+        var workspace = "w1"
+    }
+
     /// A snapshot as herdr 0.9 prints it, trimmed to the fields fwd reads.
-    func snapshot(_ panes: [(cwd: String, agent: String?, status: String?)]) -> String {
-        let items = panes.map { pane in
-            """
-            {"cwd":"\(pane.cwd)","foreground_cwd":"\(pane.cwd)",\
-            "agent":\(pane.agent.map { "\"\($0)\"" } ?? "null"),\
-            "agent_status":\(pane.status.map { "\"\($0)\"" } ?? "null"),"pane_id":"w1:p1"}
-            """
+    func snapshot(_ panes: [P], workspaces: [(String, String)] = []) -> String {
+        func q(_ s: String?) -> String { s.map { "\"\($0)\"" } ?? "null" }
+        let items = panes.map {
+            #"{"pane_id":"\#($0.id)","workspace_id":"\#($0.workspace)","cwd":"\#($0.cwd)","foreground_cwd":"\#($0.cwd)","#
+                + #""agent":\#(q($0.agent)),"agent_status":\#(q($0.status)),"terminal_title_stripped":\#(q($0.title))}"#
         }
+        let ws = workspaces.map { #"{"workspace_id":"\#($0.0)","label":"\#($0.1)"}"# }
         return #"{"id":"cli:api:snapshot","result":{"type":"snapshot","snapshot":{"panes":["#
-            + items.joined(separator: ",") + "]}}}"
+            + items.joined(separator: ",") + #"],"workspaces":["# + ws.joined(separator: ",") + "]}}}"
     }
 
     func output(_ json: String, home: String = "/home/me", exit: Int = 0) -> String {
@@ -23,80 +31,93 @@ import Yams
     }
 
     func block(_ session: String, _ json: String, exit: Int = 0) -> String {
-        "#fwd:session \(session)\n\(json)\n\n#fwd:exit \(exit)\n"
+        "#fwd:session \(session)\n\(json)\n#fwd:exit \(exit)\n"
+    }
+
+    func found(_ listing: Herdr.Listing) -> Herdr.Found? {
+        if case .found(let found) = listing { return found }
+        Issue.record("expected a listing, got \(listing)")
+        return nil
     }
 
     let notRunning = #"{"id":"cli:api:snapshot","error":{"code":"server_not_running","message":"no herdr server is running"}}"#
 
-    /// herdr runs one server per named session; a folder open in any
-    /// running one is listed.
-    @Test func listsTheDirectoriesOfEveryRunningSession() {
-        let text = output(snapshot([("/home/me/code/fwd", "claude", "working")]))
-            + block("work", snapshot([("/home/me/code/corridor", nil, nil), ("/home/me/wt/fwd-herdr", "claude", "idle")]))
-            + block("old", notRunning, exit: 1)
-        let answer = Herdr.read(text)
-        guard case .directories(let dirs) = answer.listing else {
-            Issue.record("expected directories: \(answer)"); return
-        }
-        #expect(dirs.map(\.display) == ["~/code/fwd", "~/wt/fwd-herdr", "~/code/corridor"])
-        #expect(answer.details.contains("herdr 0.9.5 at /usr/bin/herdr"), "\(answer.details)")
-        #expect(answer.details.contains("session work: 2 panes in /home/me/code/corridor, /home/me/wt/fwd-herdr"), "\(answer.details)")
-        #expect(answer.details.contains("session old: not running"), "\(answer.details)")
-        #expect(answer.details.contains("3 directories listed"), "\(answer.details)")
-    }
-
-    @Test func listsEachDirectoryOnceWithItsMostPressingStatus() {
+    /// Like herdr's sidebar: one row per agent, titled as the pane is,
+    /// in herdr's order, even when several share a folder.
+    @Test func listsEveryAgentByItsTitle() throws {
         let json = snapshot([
-            ("/home/me/code/fwd", "claude", "working"),
-            ("/home/me/code/fwd", nil, nil),
-            ("/home/me/code/finance", "claude", "idle"),
-            ("/home/me/code/finance", "codex", "blocked"),
-            ("/home/me/code", nil, nil),
-            ("/srv/app", "pi", "done"),
-        ])
-        guard case .directories(let dirs) = Herdr.parse(output(json)) else {
-            Issue.record("expected directories"); return
-        }
-        #expect(dirs.map(\.display) == ["~/code/finance", "/srv/app", "~/code/fwd", "~/code"])
-        #expect(dirs.map(\.status) == [.blocked, .agent, .agent, .none])
-        #expect(dirs.map(\.name) == ["finance", "app", "fwd", "code"])
-        #expect(dirs[2].path == "/home/me/code/fwd")
+            P(id: "w1:p1", cwd: "/home/me/av", agent: "claude", status: "idle", title: "Dash costs"),
+            P(id: "w2:p1", cwd: "/home/me/av", agent: "claude", status: "blocked", title: "review apps", workspace: "w2"),
+            P(id: "w3:p1", cwd: "/home/me/av", agent: "codex", status: "working", title: "", workspace: "w3"),
+            P(id: "w4:p1", cwd: "/home/me/av"),
+        ], workspaces: [("w3", "sort_")])
+        let result = try #require(found(Herdr.parse(output(json))))
+        #expect(result.agents.map(\.title) == ["Dash costs", "review apps", "sort_"])
+        #expect(result.agents.map(\.status) == [.agent, .blocked, .agent])
+        #expect(result.agents.map(\.display) == ["~/av", "~/av", "~/av"])
+        #expect(result.folders.map(\.display) == ["~/av"])
     }
 
-    /// vdesk: every pane sits in ~/av while the agents work in its worktrees,
+    /// An agent that moved into a worktree is listed there: its pane stays
+    /// put, but Claude Code's transcript records where it went.
+    @Test func placesClaudeWhereItsTranscriptLastWorked() throws {
+        let text = output(snapshot([
+            P(id: "w1:p1", cwd: "/home/me/av", agent: "claude", status: "idle", title: "review apps"),
+            P(id: "w2:p1", cwd: "/home/me/av", agent: "claude", status: "idle", title: "Dash costs", workspace: "w2"),
+        ]))
+            + "#fwd:process default w1:p1\n"
+            + #"{"result":{"process_info":{"foreground_processes":[{"pid":10,"name":"zsh","argv0":"-zsh"},{"pid":42,"name":"2.1.311","argv0":"claude"}]}}}"#
+            + "\n#fwd:end\n"
+            + "#fwd:process default w2:p1\n"
+            + #"{"result":{"process_info":{"foreground_processes":[{"pid":43,"name":"claude","argv0":"/usr/local/bin/claude"}]}}}"#
+            + "\n#fwd:end\n"
+            + "#fwd:claude\n" + #"{"pid":42,"sessionId":"abc","cwd":"/home/me/av","name":"Delve previews"}"#
+            + "\n#fwd:lastcwd /home/me/av-delve-previews\n#fwd:end\n"
+            + "#fwd:claude\n" + #"{"pid":43,"sessionId":"def","cwd":"/home/me/av"}"# + "\n#fwd:end\n"
+        let answer = Herdr.read(text)
+        let result = try #require(found(answer.listing))
+        #expect(result.agents.map(\.path) == ["/home/me/av-delve-previews", "/home/me/av"])
+        #expect(result.agents.map(\.folderName) == ["av-delve-previews", "av"])
+        #expect(answer.details.contains("agent review apps [default w1:p1, claude pid 42] in /home/me/av-delve-previews (pane in /home/me/av)"),
+                "\(answer.details)")
+    }
+
+    /// vdesk: every pane sits in ~/av while the work is in its worktrees,
     /// which are folders beside it. Those come from `herdr worktree list`.
-    @Test func listsTheWorktreesOfEachFolderUnderIt() {
-        let home = "/home/kfritz"
+    @Test func listsEachRepoWithItsWorktreesUnderIt() throws {
         let worktrees = #"""
-            {"id":"cli:worktree:list","result":{"source":{"repo_root":"/home/kfritz/av"},"type":"worktree_list","worktrees":[\#
-            {"branch":"common/master/latest","is_bare":false,"is_linked_worktree":false,"path":"/home/kfritz/av"},\#
-            {"branch":"kf/trt-stable-sort","is_bare":false,"is_linked_worktree":true,"path":"/home/kfritz/av-trt-stable-sort"},\#
-            {"branch":"kf/delve-preview-ci","is_bare":false,"is_linked_worktree":true,"path":"/home/kfritz/av-delve-previews"}]}}
+            {"id":"cli:worktree:list","result":{"worktrees":[\#
+            {"branch":"common/master/latest","is_bare":false,"is_linked_worktree":false,"path":"/home/me/av"},\#
+            {"branch":"kf/trt-stable-sort","is_bare":false,"is_linked_worktree":true,"path":"/home/me/av-trt-stable-sort"},\#
+            {"branch":"kf/delve-preview-ci","is_bare":false,"is_linked_worktree":true,"path":"/home/me/av-delve-previews"}]}}
             """#
         let notRepo = #"{"error":{"code":"not_git_worktree","message":"Herdr worktree actions require a path inside a Git work tree"},"id":"cli:worktree:list"}"#
-        let text = output(snapshot([("/home/kfritz/av", "claude", "idle"), ("/home/kfritz/av", nil, nil),
-                                    ("/home/kfritz/notes", nil, nil)]), home: home)
-            + "#fwd:worktrees /home/kfritz/av\n\(worktrees)\n\n#fwd:end\n"
-            + "#fwd:worktrees /home/kfritz/notes\n\(notRepo)\n\n#fwd:end\n"
+        let text = output(snapshot([P(cwd: "/home/me/av", agent: "claude", status: "idle", title: "x"),
+                                    P(id: "w2:p1", cwd: "/home/me/notes"), P(id: "w3:p1", cwd: "/home/me")]))
+            + "#fwd:worktrees /home/me/av\n\(worktrees)\n#fwd:end\n"
+            + "#fwd:worktrees /home/me/notes\n\(notRepo)\n#fwd:end\n"
         let answer = Herdr.read(text)
-        guard case .directories(let dirs) = answer.listing else {
-            Issue.record("expected directories: \(answer)"); return
-        }
-        #expect(dirs.map(\.display) == ["~/av", "~/av-delve-previews", "~/av-trt-stable-sort", "~/notes"])
-        #expect(dirs.map(\.worktreeOf) == [nil, "/home/kfritz/av", "/home/kfritz/av", nil])
-        #expect(dirs.map(\.branch) == [nil, "kf/delve-preview-ci", "kf/trt-stable-sort", nil])
-        #expect(dirs[0].status == .agent)
-        #expect(answer.details.contains("worktrees of /home/kfritz/av: 2 linked"), "\(answer.details)")
-        #expect(answer.details.contains("worktrees of /home/kfritz/notes: not_git_worktree"), "\(answer.details)")
+        let result = try #require(found(answer.listing))
+        #expect(result.folders.map(\.display) == ["~/av", "~/av-delve-previews", "~/av-trt-stable-sort", "~/notes", "~"])
+        #expect(result.folders.map(\.worktreeOf) == [nil, "/home/me/av", "/home/me/av", nil, nil])
+        #expect(result.folders.map(\.branch) == ["common/master/latest", "kf/delve-preview-ci", "kf/trt-stable-sort", nil, nil])
+        #expect(result.folders.map(\.name) == ["av", "av-delve-previews", "av-trt-stable-sort", "notes", "~"])
+        #expect(answer.details.contains("worktrees of /home/me/av: 2 linked"), "\(answer.details)")
+        #expect(answer.details.contains("worktrees of /home/me/notes: not_git_worktree"), "\(answer.details)")
     }
 
-    @Test func theHomeDirectoryShowsAsATilde() {
-        guard case .directories(let dirs) = Herdr.parse(output(snapshot([("/home/me", nil, nil)]))) else {
-            Issue.record("expected directories"); return
-        }
-        #expect(dirs.map(\.display) == ["~"])
-        #expect(dirs.map(\.name) == ["~"])
-        #expect(Herdr.tilde("/home/meow", home: "/home/me") == "/home/meow")
+    /// herdr runs one server per named session; every running one is read.
+    @Test func readsEveryRunningSession() throws {
+        let text = output(snapshot([P(cwd: "/home/me/code/fwd", agent: "claude", status: "working", title: "a")]))
+            + block("work", snapshot([P(cwd: "/home/me/code/corridor", agent: "claude", status: "idle", title: "b")]))
+            + block("old", notRunning, exit: 1)
+        let answer = Herdr.read(text)
+        let result = try #require(found(answer.listing))
+        #expect(result.agents.map(\.title) == ["a", "b"])
+        #expect(result.agents.map(\.id) == ["default w1:p1", "work w1:p1"], "the same pane ID in two sessions stays two agents")
+        #expect(answer.details.contains("herdr 0.9.5 at /usr/bin/herdr"), "\(answer.details)")
+        #expect(answer.details.contains("session work: 1 panes, 1 with an agent"), "\(answer.details)")
+        #expect(answer.details.contains("session old: not running"), "\(answer.details)")
     }
 
     @Test func saysWhenHerdrIsMissingOrNotRunning() {
@@ -107,12 +128,14 @@ import Yams
         #expect(Herdr.parse(output(other, exit: 1)) == .failed("something broke"))
         #expect(Herdr.parse(output("Segmentation fault", exit: 139)) == .failed("herdr didn't give a snapshot (exit status 139)."))
         #expect(Herdr.parse("") == .failed("The host didn't answer as expected."))
-        #expect(Herdr.parse(output(snapshot([]))) == .directories([]))
+        #expect(Herdr.parse(output(snapshot([]))) == .found(Herdr.Found(agents: [], folders: [])))
+        #expect(Herdr.tilde("/home/meow", home: "/home/me") == "/home/meow")
     }
 
     /// The script itself, under sh, with a stand-in herdr where a login
-    /// PATH wouldn't find it.
-    @Test func theScriptFindsHerdrOffThePath() async throws {
+    /// PATH wouldn't find it, and a Claude Code session that moved into a
+    /// worktree.
+    @Test func theScriptRunsEveryStep() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-herdr-\(UUID().uuidString.prefix(8))")
         defer { try? FileManager.default.removeItem(at: home) }
         let env = ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=\(home.path)", "/bin/sh", "-c"]
@@ -125,32 +148,48 @@ import Yams
             #expect(Herdr.parse(missing.stdout) == .notInstalled)
         }
 
+        let h = home.path
         let bin = home.appendingPathComponent(".local/bin")
-        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let sessions = home.appendingPathComponent(".claude/sessions")
+        let projects = home.appendingPathComponent(".claude/projects/-code-fwd")
+        for dir in [bin, sessions, projects] {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        try #"{"pid":4242,"sessionId":"abc","cwd":"\#(h)/code/fwd","name":"fwd release"}"#
+            .write(to: sessions.appendingPathComponent("4242.json"), atomically: true, encoding: .utf8)
+        try "{\"type\":\"user\",\"cwd\":\"\(h)/code/fwd\"}\n{\"type\":\"assistant\",\"cwd\":\"\(h)/code/fwd-x\"}\n"
+            .write(to: projects.appendingPathComponent("abc.jsonl"), atomically: true, encoding: .utf8)
+
         let fake = bin.appendingPathComponent("herdr")
+        let main = snapshot([P(cwd: "\(h)/code/fwd", agent: "claude", status: "working", title: "fwd release")])
+        let work = snapshot([P(cwd: "\(h)/code/corridor")])
         // Two sessions, as `herdr session list --json` prints them.
         try """
             #!/bin/sh
             case "$*" in
             "--version") echo "herdr 0.9.5" ;;
             "session list --json") echo '{"sessions":[{"default":true,"name":"default","running":true},{"default":false,"name":"work","running":true}]}' ;;
-            "--session default api snapshot") echo '\(snapshot([("\(home.path)/code/fwd", "claude", "working")]))' ;;
-            "--session work api snapshot") echo '\(snapshot([("\(home.path)/code/corridor", nil, nil)]))' ;;
-            "worktree list --cwd \(home.path)/code/fwd") echo '{"result":{"worktrees":[{"branch":"main","is_linked_worktree":false,"path":"\(home.path)/code/fwd"},{"branch":"kf/x","is_linked_worktree":true,"path":"\(home.path)/code/fwd-x"}]}}' ;;
+            "--session default api snapshot") echo '\(main)' ;;
+            "--session work api snapshot") echo '\(work)' ;;
+            "--session default pane process-info --pane w1:p1") echo '{"result":{"process_info":{"foreground_processes":[{"pid":4242,"name":"2.1.311","argv0":"claude"}]}}}' ;;
+            "--session work pane process-info --pane w1:p1") echo '{"result":{"process_info":{"foreground_processes":[{"pid":7,"name":"zsh","argv0":"-zsh"}]}}}' ;;
+            "worktree list --cwd \(h)/code/fwd") echo '{"result":{"worktrees":[{"branch":"main","is_linked_worktree":false,"path":"\(h)/code/fwd"},{"branch":"kf/x","is_linked_worktree":true,"path":"\(h)/code/fwd-x"}]}}' ;;
             "worktree list --cwd "*) echo '{"error":{"code":"not_git_worktree"}}' ;;
             *) exit 2 ;;
             esac
             """.write(to: fake, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
 
-        let found = await Shell.run(env[0], Array(env.dropFirst()) + [script])
-        #expect(found.ok)
-        #expect(Herdr.parse(found.stdout) == .directories([
-            Herdr.Directory(path: "\(home.path)/code/fwd", display: "~/code/fwd", status: .agent),
-            Herdr.Directory(path: "\(home.path)/code/fwd-x", display: "~/code/fwd-x", status: .none,
-                            worktreeOf: "\(home.path)/code/fwd", branch: "kf/x"),
-            Herdr.Directory(path: "\(home.path)/code/corridor", display: "~/code/corridor", status: .none),
-        ]), "\(found.stdout)")
+        let ran = await Shell.run(env[0], Array(env.dropFirst()) + [script])
+        #expect(ran.ok)
+        #expect(Herdr.parse(ran.stdout) == .found(Herdr.Found(
+            agents: [Herdr.Agent(id: "default w1:p1", title: "fwd release", path: "\(h)/code/fwd-x",
+                                 display: "~/code/fwd-x", status: .agent)],
+            folders: [
+                Herdr.Directory(path: "\(h)/code/corridor", display: "~/code/corridor"),
+                Herdr.Directory(path: "\(h)/code/fwd", display: "~/code/fwd", branch: "main"),
+                Herdr.Directory(path: "\(h)/code/fwd-x", display: "~/code/fwd-x", worktreeOf: "\(h)/code/fwd", branch: "kf/x"),
+            ])), "\(ran.stdout)")
     }
 
     @Test func theCommandSurvivesAnyLoginShell() {
