@@ -132,14 +132,15 @@ import Yams
         #expect(Herdr.tilde("/home/meow", home: "/home/me") == "/home/meow")
     }
 
-    /// The script itself, under sh, with a stand-in herdr where a login
+    /// The command fwd sends, under sh, with a stand-in herdr where a login
     /// PATH wouldn't find it, and a Claude Code session that moved into a
     /// worktree.
     @Test func theScriptRunsEveryStep() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-herdr-\(UUID().uuidString.prefix(8))")
         defer { try? FileManager.default.removeItem(at: home) }
         let env = ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=\(home.path)", "/bin/sh", "-c"]
-        let script = Herdr.script.trimmingCharacters(in: .newlines)
+        // The command exactly as fwd sends it.
+        let script = Herdr.command
 
         // Unless this machine has its own herdr in one of the system folders.
         if !["/opt/homebrew/bin/herdr", "/usr/local/bin/herdr"].contains(where: FileManager.default.isExecutableFile) {
@@ -192,10 +193,18 @@ import Yams
             ])), "\(ran.stdout)")
     }
 
+    @Test func scriptMatchesTheFileInScripts() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("scripts/herdr.sh")
+        #expect(try String(contentsOf: file, encoding: .utf8) == Herdr.script)
+    }
+
+    /// Base64 and a pipe: nothing any login shell, csh included, reads specially.
     @Test func theCommandSurvivesAnyLoginShell() {
-        #expect(!Herdr.script.trimmingCharacters(in: .newlines).contains("'"))
-        #expect(!Herdr.script.trimmingCharacters(in: .newlines).contains("\n"))
-        #expect(Herdr.command.hasPrefix("sh -c '"))
+        let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= |-")
+        #expect(Herdr.command.allSatisfy(allowed.contains))
+        #expect(Herdr.command.hasSuffix(" | base64 -d | sh"))
     }
 
     @Test func isOnUnlessTurnedOff() throws {

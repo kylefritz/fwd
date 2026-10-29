@@ -77,7 +77,7 @@ struct HerdrSnapshot: View {
         }
         .padding(16)
         .task {
-            let result = await Shell.run("/bin/sh", ["-c", Herdr.script.trimmingCharacters(in: .newlines)])
+            let result = await Shell.run("/bin/sh", ["-c", Herdr.command])
             live = Herdr.parse(result.stdout)
         }
     }

@@ -55,23 +55,95 @@ public enum Herdr {
         case failed(String)
     }
 
-    /// One line with no single quotes, so it can be wrapped in `sh -c '...'`
-    /// like the port scan. A non-interactive ssh command often lacks the
-    /// login PATH, so the usual install folders are tried too. Each step's
-    /// output follows a `#fwd:` marker:
-    /// - every named herdr session's snapshot (each has its own server);
-    /// - each pane's processes, to find the Claude Code in it;
-    /// - Claude Code's session files, each with the last folder its
-    ///   transcript recorded;
-    /// - the git worktrees of each folder a pane is in.
-    /// herdr's exit status is printed rather than returned, so a herdr error
-    /// arrives as output instead of an ssh failure.
+    /// The check run on the remote, kept identical to `scripts/herdr.sh`,
+    /// which explains each step. A test checks they match.
     public static let script = #"""
-    echo "#fwd:home $HOME"; h=$(command -v herdr 2>/dev/null); for p in "$HOME/.local/bin/herdr" "$HOME/.cargo/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr; do [ -n "$h" ] && break; [ -x "$p" ] && h="$p"; done; if [ -z "$h" ]; then echo "#fwd:noherdr"; else echo "#fwd:herdr $h"; echo "#fwd:version $("$h" --version 2>/dev/null | head -n 1)"; n=$("$h" session list --json 2>/dev/null | tr "," "\n" | grep "\"name\":" | sed "s/.*\"name\":\"//; s/\".*//"); [ -z "$n" ] && n=default; f=""; for x in $n; do echo "#fwd:session $x"; o=$("$h" --session "$x" api snapshot); e=$?; printf "%s\n" "$o"; echo "#fwd:exit $e"; f=$(printf "%s\n%s" "$f" "$(printf "%s" "$o" | grep -o "\"foreground_cwd\":\"[^\"]*\"" | sed "s/^\"foreground_cwd\":\"//; s/\"$//")"); for i in $(printf "%s" "$o" | grep -o "\"pane_id\":\"[^\"]*\"" | sed "s/^\"pane_id\":\"//; s/\"$//" | sort -u); do echo "#fwd:process $x $i"; "$h" --session "$x" pane process-info --pane "$i" 2>&1; echo; echo "#fwd:end"; done; done; for c in "$HOME"/.claude/sessions/*.json; do [ -f "$c" ] || continue; echo "#fwd:claude"; cat "$c"; echo; d=$(grep -o "\"sessionId\": *\"[^\"]*\"" "$c" | sed "s/.*: *\"//; s/\"$//"); t=$(ls "$HOME"/.claude/projects/*/"$d".jsonl 2>/dev/null | head -n 1); [ -n "$d" ] && [ -n "$t" ] && tail -n 200 "$t" | grep -o "\"cwd\": *\"[^\"]*\"" | tail -n 1 | sed "s/.*: *\"/#fwd:lastcwd /; s/\"$//"; echo "#fwd:end"; done; printf "%s\n" "$f" | sort -u | while IFS= read -r d; do [ -n "$d" ] || continue; echo "#fwd:worktrees $d"; "$h" worktree list --cwd "$d" 2>&1; echo; echo "#fwd:end"; done; fi
+    # What a host's herdr has open, for fwd's VS Code menu. Read-only.
+    #
+    # fwd sends this whole file to the remote and parses what it prints in
+    # Herdr.read (Sources/FwdCore/Herdr.swift). Herdr.script must stay identical
+    # to this file; a test checks. Each part of the output follows a `#fwd:`
+    # marker line. herdr's exit status is printed instead of returned, so its
+    # errors come back as output rather than as an ssh failure. Every command that
+    # could read stdin gets /dev/null, because sh is reading this script from it.
+
+    echo "#fwd:home $HOME"
+
+    # A non-interactive ssh command often lacks the login PATH, so look in the
+    # usual install folders too.
+    h=$(command -v herdr 2>/dev/null)
+    for p in "$HOME/.local/bin/herdr" "$HOME/.cargo/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr; do
+        [ -n "$h" ] && break
+        [ -x "$p" ] && h="$p"
+    done
+    if [ -z "$h" ]; then
+        echo "#fwd:noherdr"
+        exit 0
+    fi
+    echo "#fwd:herdr $h"
+    echo "#fwd:version $("$h" --version </dev/null 2>/dev/null | head -n 1)"
+
+    # Pulls one string field's values out of JSON on stdin, without jq.
+    field() {
+        grep -o "\"$1\": *\"[^\"]*\"" | sed "s/.*: *\"//; s/\"\$//"
+    }
+
+    # herdr runs one server per named session, and a snapshot covers only one.
+    sessions=$("$h" session list --json </dev/null 2>/dev/null | field name)
+    [ -z "$sessions" ] && sessions=default
+
+    # Each session's snapshot, then the processes in each of its panes: an agent
+    # that moves into a worktree doesn't move its pane, so fwd finds the Claude
+    # Code in each pane to learn where it went.
+    folders=""
+    for session in $sessions; do
+        echo "#fwd:session $session"
+        snapshot=$("$h" --session "$session" api snapshot </dev/null)
+        code=$?
+        printf "%s\n" "$snapshot"
+        echo "#fwd:exit $code"
+        folders=$(printf "%s\n%s" "$folders" "$(printf "%s" "$snapshot" | field foreground_cwd)")
+        for pane in $(printf "%s" "$snapshot" | field pane_id | sort -u); do
+            echo "#fwd:process $session $pane"
+            "$h" --session "$session" pane process-info --pane "$pane" </dev/null 2>&1
+            echo
+            echo "#fwd:end"
+        done
+    done
+
+    # Claude Code writes ~/.claude/sessions/<pid>.json for each running process.
+    # Its transcript records the folder it's working in as it goes; the last one
+    # is where it is now.
+    for file in "$HOME"/.claude/sessions/*.json; do
+        [ -f "$file" ] || continue
+        echo "#fwd:claude"
+        cat "$file"
+        echo
+        id=$(field sessionId < "$file")
+        transcript=$(ls "$HOME"/.claude/projects/*/"$id".jsonl 2>/dev/null | head -n 1)
+        if [ -n "$id" ] && [ -n "$transcript" ]; then
+            last=$(tail -n 200 "$transcript" | field cwd | tail -n 1)
+            [ -n "$last" ] && echo "#fwd:lastcwd $last"
+        fi
+        echo "#fwd:end"
+    done
+
+    # The git worktrees of each folder a pane is in.
+    printf "%s\n" "$folders" | sort -u | while IFS= read -r folder; do
+        [ -n "$folder" ] || continue
+        echo "#fwd:worktrees $folder"
+        "$h" worktree list --cwd "$folder" </dev/null 2>&1
+        echo
+        echo "#fwd:end"
+    done
+
     """#
 
+    /// Sends the script as base64 piped into `sh`. The script has quotes and
+    /// newlines that some login shells (csh) can't take inside `sh -c '...'`,
+    /// while base64 has nothing any shell reads specially.
     public static var command: String {
-        "sh -c '\(script.trimmingCharacters(in: .newlines))'"
+        "echo \(Data(script.utf8).base64EncodedString()) | base64 -d | sh"
     }
 
     /// What the menu shows, and a line for the log saying how it got there.
