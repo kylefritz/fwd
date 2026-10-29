@@ -37,41 +37,98 @@ public enum Herdr {
 
     /// One line with no single quotes, so it can be wrapped in `sh -c '...'`
     /// like the port scan. A non-interactive ssh command often lacks the
-    /// login PATH, so the usual install folders are tried too. herdr's exit
-    /// status is reported on a line of its own rather than as the command's,
-    /// so a herdr error arrives as output instead of an ssh failure.
+    /// login PATH, so the usual install folders are tried too. herdr can run
+    /// several named sessions, each with its own server, and a snapshot only
+    /// covers one, so every session is asked. Each herdr exit status is
+    /// reported on a line of its own rather than as the command's, so a herdr
+    /// error arrives as output instead of an ssh failure.
     public static let script = #"""
-    echo "#fwd:home $HOME"; h=$(command -v herdr 2>/dev/null); for p in "$HOME/.local/bin/herdr" "$HOME/.cargo/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr; do [ -n "$h" ] && break; [ -x "$p" ] && h="$p"; done; if [ -z "$h" ]; then echo "#fwd:noherdr"; else echo "#fwd:herdr"; "$h" api snapshot; s=$?; echo; echo "#fwd:exit $s"; fi
+    echo "#fwd:home $HOME"; h=$(command -v herdr 2>/dev/null); for p in "$HOME/.local/bin/herdr" "$HOME/.cargo/bin/herdr" /opt/homebrew/bin/herdr /usr/local/bin/herdr; do [ -n "$h" ] && break; [ -x "$p" ] && h="$p"; done; if [ -z "$h" ]; then echo "#fwd:noherdr"; else echo "#fwd:herdr $h"; echo "#fwd:version $("$h" --version 2>/dev/null | head -n 1)"; n=$("$h" session list --json 2>/dev/null | tr "," "\n" | grep "\"name\":" | sed "s/.*\"name\":\"//; s/\".*//"); [ -z "$n" ] && n=default; for x in $n; do echo "#fwd:session $x"; "$h" --session "$x" api snapshot; e=$?; echo; echo "#fwd:exit $e"; done; fi
     """#
 
     public static var command: String {
         "sh -c '\(script.trimmingCharacters(in: .newlines))'"
     }
 
-    /// Reads the script's output. Lines before the first marker (a login
-    /// banner, an rc file's chatter) are skipped.
-    public static func parse(_ output: String) -> Listing {
-        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
-        func marker(_ name: String) -> Int? { lines.firstIndex { $0.contains("#fwd:\(name)") } }
-        if marker("noherdr") != nil { return .notInstalled }
-        guard let start = marker("herdr") else { return .failed("The host didn't answer as expected.") }
-        let home = marker("home").flatMap { index -> String? in
-            guard let range = lines[index].range(of: "#fwd:home ") else { return nil }
-            let value = lines[index][range.upperBound...].trimmingCharacters(in: .whitespaces)
-            return value.isEmpty ? nil : value
-        }
-        let end = lines[(start + 1)...].firstIndex { $0.hasPrefix("#fwd:exit") } ?? lines.endIndex
-        let json = lines[(start + 1)..<end].joined(separator: "\n")
+    /// What the menu shows, and a line for the log saying how it got there.
+    public struct Answer: Equatable, Sendable {
+        public let listing: Listing
+        public let details: String
+    }
 
-        guard let reply = try? JSONDecoder.snakeCase.decode(Reply.self, from: Data(json.utf8)) else {
-            let exit = end < lines.endIndex ? lines[end].dropFirst("#fwd:exit".count).trimmingCharacters(in: .whitespaces) : "?"
-            return .failed("herdr didn't give a snapshot (exit status \(exit)).")
+    public static func parse(_ output: String) -> Listing { read(output).listing }
+
+    /// Reads the script's output. Lines before the first marker (a login
+    /// banner, an rc file's chatter) are skipped. Sessions that aren't running
+    /// are left out; the listing is "not running" only when none is.
+    public static func read(_ output: String) -> Answer {
+        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
+        func value(_ name: String) -> String? {
+            for line in lines {
+                guard let range = line.range(of: "#fwd:\(name) ") else { continue }
+                let value = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
+                return value.isEmpty ? nil : value
+            }
+            return nil
         }
-        if let error = reply.error {
-            if error.code == "server_not_running" { return .notRunning }
-            return .failed(error.message ?? error.code ?? "herdr reported an error.")
+        if lines.contains(where: { $0.contains("#fwd:noherdr") }) {
+            return Answer(listing: .notInstalled, details: "herdr not found on the PATH or in the usual folders")
         }
-        return .directories(directories(reply.result?.snapshot.panes ?? [], home: home))
+        guard let path = value("herdr") else {
+            let shown = output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)
+            return Answer(listing: .failed("The host didn't answer as expected."),
+                          details: "no herdr marker in the output: \(shown.isEmpty ? "(empty)" : String(shown))")
+        }
+        let home = value("home")
+        var notes = ["\(value("version") ?? "herdr (unknown version)") at \(path)", "home \(home ?? "unknown")"]
+
+        var panes: [Pane] = []
+        var running = 0
+        var failure: String?
+        var index = lines.startIndex
+        while let start = lines[index...].firstIndex(where: { $0.hasPrefix("#fwd:session ") }) {
+            let name = String(lines[start].dropFirst("#fwd:session ".count))
+            let end = lines[(start + 1)...].firstIndex { $0.hasPrefix("#fwd:exit") } ?? lines.endIndex
+            let json = lines[(start + 1)..<end].joined(separator: "\n")
+            let exit = end < lines.endIndex ? String(lines[end].dropFirst("#fwd:exit".count)).trimmingCharacters(in: .whitespaces) : "?"
+            index = min(end + 1, lines.endIndex)
+
+            guard let reply = try? JSONDecoder.snakeCase.decode(Reply.self, from: Data(json.utf8)) else {
+                failure = failure ?? "herdr didn't give a snapshot (exit status \(exit))."
+                notes.append("session \(name): no snapshot, exit \(exit): \(json.prefix(200))")
+                continue
+            }
+            if let error = reply.error {
+                if error.code == "server_not_running" {
+                    notes.append("session \(name): not running")
+                } else {
+                    failure = failure ?? error.message ?? error.code ?? "herdr reported an error."
+                    notes.append("session \(name): error \(error.code ?? "?"): \(error.message ?? "")")
+                }
+                continue
+            }
+            let mine = reply.result?.snapshot.panes ?? []
+            running += 1
+            panes += mine
+            let folders = Set(mine.compactMap(\.folder)).sorted()
+            notes.append("session \(name): \(mine.count) panes in \(folders.joined(separator: ", "))")
+        }
+
+        let listing: Listing
+        if running > 0 {
+            let dirs = directories(panes, home: home)
+            listing = .directories(dirs)
+            notes.append("\(dirs.count) directories listed")
+            let skipped = panes.filter { $0.folder == nil }.count
+            if skipped > 0 { notes.append("\(skipped) panes without a folder skipped") }
+        } else if let failure {
+            listing = .failed(failure)
+        } else if notes.contains(where: { $0.hasPrefix("session ") }) {
+            listing = .notRunning
+        } else {
+            listing = .failed("herdr didn't list any sessions.")
+        }
+        return Answer(listing: listing, details: notes.joined(separator: "; "))
     }
 
     /// One row per directory, however many panes are in it, showing the
@@ -79,7 +136,7 @@ public enum Herdr {
     static func directories(_ panes: [Pane], home: String?) -> [Directory] {
         var status: [String: Status] = [:]
         for pane in panes {
-            guard let path = pane.foregroundCwd ?? pane.cwd, path.hasPrefix("/") else { continue }
+            guard let path = pane.folder else { continue }
             let mine: Status = pane.agent == nil ? .none : pane.agentStatus == "blocked" ? .blocked : .agent
             status[path] = min(status[path] ?? .none, mine)
         }
@@ -107,6 +164,12 @@ public enum Herdr {
         let foregroundCwd: String?
         let agent: String?
         let agentStatus: String?
+
+        /// Where the pane's foreground program is, else the pane's own folder.
+        var folder: String? {
+            guard let path = foregroundCwd ?? cwd, path.hasPrefix("/") else { return nil }
+            return path
+        }
     }
 }
 

@@ -18,7 +18,31 @@ import Yams
     }
 
     func output(_ json: String, home: String = "/home/me", exit: Int = 0) -> String {
-        "Welcome to devbox!\n#fwd:home \(home)\n#fwd:herdr\n\(json)\n\n#fwd:exit \(exit)\n"
+        "Welcome to devbox!\n#fwd:home \(home)\n#fwd:herdr /usr/bin/herdr\n#fwd:version herdr 0.9.5\n"
+            + block("default", json, exit: exit)
+    }
+
+    func block(_ session: String, _ json: String, exit: Int = 0) -> String {
+        "#fwd:session \(session)\n\(json)\n\n#fwd:exit \(exit)\n"
+    }
+
+    let notRunning = #"{"id":"cli:api:snapshot","error":{"code":"server_not_running","message":"no herdr server is running"}}"#
+
+    /// herdr runs one server per named session; a folder open in any
+    /// running one is listed.
+    @Test func listsTheDirectoriesOfEveryRunningSession() {
+        let text = output(snapshot([("/home/me/code/fwd", "claude", "working")]))
+            + block("work", snapshot([("/home/me/code/corridor", nil, nil), ("/home/me/wt/fwd-herdr", "claude", "idle")]))
+            + block("old", notRunning, exit: 1)
+        let answer = Herdr.read(text)
+        guard case .directories(let dirs) = answer.listing else {
+            Issue.record("expected directories: \(answer)"); return
+        }
+        #expect(dirs.map(\.display) == ["~/code/fwd", "~/wt/fwd-herdr", "~/code/corridor"])
+        #expect(answer.details.contains("herdr 0.9.5 at /usr/bin/herdr"), "\(answer.details)")
+        #expect(answer.details.contains("session work: 2 panes in /home/me/code/corridor, /home/me/wt/fwd-herdr"), "\(answer.details)")
+        #expect(answer.details.contains("session old: not running"), "\(answer.details)")
+        #expect(answer.details.contains("3 directories listed"), "\(answer.details)")
     }
 
     @Test func listsEachDirectoryOnceWithItsMostPressingStatus() {
@@ -50,8 +74,8 @@ import Yams
 
     @Test func saysWhenHerdrIsMissingOrNotRunning() {
         #expect(Herdr.parse("#fwd:home /home/me\n#fwd:noherdr\n") == .notInstalled)
-        let notRunning = #"{"id":"cli:api:snapshot","error":{"code":"server_not_running","message":"no herdr server is running"}}"#
         #expect(Herdr.parse(output(notRunning, exit: 1)) == .notRunning)
+        #expect(Herdr.parse(output(notRunning, exit: 1) + block("work", notRunning, exit: 1)) == .notRunning)
         let other = #"{"id":"x","error":{"code":"boom","message":"something broke"}}"#
         #expect(Herdr.parse(output(other, exit: 1)) == .failed("something broke"))
         #expect(Herdr.parse(output("Segmentation fault", exit: 139)) == .failed("herdr didn't give a snapshot (exit status 139)."))
@@ -77,14 +101,24 @@ import Yams
         let bin = home.appendingPathComponent(".local/bin")
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let fake = bin.appendingPathComponent("herdr")
-        try "#!/bin/sh\n[ \"$1 $2\" = 'api snapshot' ] || exit 2\nprintf '%s\\n' '\(snapshot([("\(home.path)/code/fwd", "claude", "working")]))'\nexit 0\n"
-            .write(to: fake, atomically: true, encoding: .utf8)
+        // Two sessions, as `herdr session list --json` prints them.
+        try """
+            #!/bin/sh
+            case "$*" in
+            "--version") echo "herdr 0.9.5" ;;
+            "session list --json") echo '{"sessions":[{"default":true,"name":"default","running":true},{"default":false,"name":"work","running":true}]}' ;;
+            "--session default api snapshot") echo '\(snapshot([("\(home.path)/code/fwd", "claude", "working")]))' ;;
+            "--session work api snapshot") echo '\(snapshot([("\(home.path)/code/corridor", nil, nil)]))' ;;
+            *) exit 2 ;;
+            esac
+            """.write(to: fake, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
 
         let found = await Shell.run(env[0], Array(env.dropFirst()) + [script])
         #expect(found.ok)
         #expect(Herdr.parse(found.stdout) == .directories([
             Herdr.Directory(path: "\(home.path)/code/fwd", display: "~/code/fwd", status: .agent),
+            Herdr.Directory(path: "\(home.path)/code/corridor", display: "~/code/corridor", status: .none),
         ]), "\(found.stdout)")
     }
 

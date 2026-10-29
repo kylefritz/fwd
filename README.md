@@ -304,27 +304,6 @@ The tests start their own OpenSSH server on `127.0.0.1` as you, with keys in a
 temporary folder. No Docker, no root. Design notes live in
 [docs/spec.md](docs/spec.md).
 
-### Pull requests need screenshots
-
-A pull request that changes anything you can see includes screenshots in its
-description, under a `## Screenshots` heading, so it can be reviewed without
-building the app. Show the state the change is about (an open menu, an error,
-a toggle switched on), and before and after for a visual fix. The app can draw
-itself with no one at the screen. After `swift build`,
-`.build/debug/fwd --snapshot-panel out.png` draws the menu bar panel, `--snapshot-hero` the README picture, `--snapshot-report` the
-report window and `--snapshot-herdr` the VS Code button's menu. Add `--light`
-for light mode.
-
-Host the images with **hidden-ref image hosting**: no image bucket, and
-nothing added to the repo's history. Through GitHub's Git Data API, make a blob
-per image, a tree of them, and an orphan commit (no parents) holding just the
-images. Then point a ref under `refs/uploads/` at that commit, for example
-`refs/uploads/pr-42-<timestamp>`. Clones don't fetch that namespace, so the
-images never reach anyone's checkout. Link each image by the commit's SHA,
-`https://github.com/<owner>/<repo>/blob/<sha>/<file>.png?raw=true`, so an
-image already in a description never breaks. Anyone who can see the pull
-request can see the images.
-
 ## License
 
 [MIT](LICENSE)

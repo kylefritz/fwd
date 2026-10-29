@@ -456,23 +456,34 @@ public final class AppModel: ObservableObject {
 
     /// The directories open in `host`'s herdr. Uses fwd's connection when
     /// there is one; otherwise a one-off ssh, as VS Code is about to make its
-    /// own connection anyway.
+    /// own connection anyway. Logs each step, since what herdr reports on a
+    /// remote can't be seen from here.
     public func herdrDirectories(host: String) async -> Herdr.Listing {
+        let started = Date()
+        func elapsed() -> String { "\(Int(Date().timeIntervalSince(started) * 1000))ms" }
         do {
             let output: String
             if let live = try await sessions[host]?.runIfConnected(Herdr.command) {
+                log.write("herdr: asked over fwd's connection (\(elapsed()), \(live.utf8.count) bytes)", host: host)
                 output = live
             } else {
+                log.write("herdr: not connected, asking with a one-off ssh", host: host)
                 let result = await Shell.run(SSHConnection.sshPath, SSHConnection.baseOptions(paths: paths)
                     + ["-o", "ConnectTimeout=8", "--", host, Herdr.command], timeout: 20)
                 guard result.ok else { throw SSHConnection.classify(stderr: result.stderr) }
+                log.write("herdr: one-off ssh answered (\(elapsed()), \(result.stdout.utf8.count) bytes)", host: host)
                 output = result.stdout
             }
-            return Herdr.parse(output)
-        } catch let error as ConnectionError {
-            return .failed("Couldn't reach \(host): \(error.message)")
+            let answer = Herdr.read(output)
+            log.write("herdr: \(answer.details)", host: host)
+            if case .directories(let dirs) = answer.listing {
+                log.write("herdr: listing \(dirs.map { "\($0.display) (\($0.status))" }.joined(separator: ", "))", host: host)
+            }
+            return answer.listing
         } catch {
-            return .failed("Couldn't reach \(host): \(error.localizedDescription)")
+            let message = (error as? ConnectionError)?.message ?? error.localizedDescription
+            log.write("herdr: failed after \(elapsed()): \(message)", host: host)
+            return .failed("Couldn't reach \(host): \(message)")
         }
     }
 

@@ -246,14 +246,22 @@ struct VSCodeButton: View {
     }
 
     private func click() {
-        guard app.herdrMenu else { return open(nil) }
+        guard app.herdrMenu else {
+            model.log.write("VS Code: herdr is off in config.yaml, opening directly", host: host)
+            return open(nil)
+        }
         ask += 1
         let mine = ask
         listing = nil
         showingMenu = true
+        model.log.write("VS Code: menu opened (ask \(mine))", host: host)
         Task {
             let answer = await model.herdrDirectories(host: host)
-            if ask == mine { listing = answer }
+            if ask == mine {
+                listing = answer
+            } else {
+                model.log.write("VS Code: dropped ask \(mine)'s answer, a newer one is coming", host: host)
+            }
         }
     }
 
