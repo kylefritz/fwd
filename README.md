@@ -42,7 +42,9 @@ fwd does the bookkeeping:
 - 🖥️ **One-click Screen Sharing.** Opens the remote's screen over the same ssh
   connection.
 - 🧑‍💻 **One-click VS Code.** Opens a Remote-SSH window on the host in VS Code
-  (or Cursor), or from the terminal with `fwd code devbox`.
+  (or Cursor), or from the terminal with `fwd code devbox`. If the host runs
+  [herdr](https://herdr.dev), the button also lists the directories open in it,
+  with a green dot where an agent is running, so you can open one directly.
 - 🤝 **Polite.** fwd connects while you're ssh'd into a host, or when you ask it
   to. It doesn't dial out on its own unless you pin a port to stay connected.
 
@@ -203,7 +205,7 @@ Everything lives in plain files, so it's easy to keep in your dotfiles.
 | File | What it is |
 |---|---|
 | `~/.config/fwd/ports.yaml` | Your entries. Edit by hand if you like; changes apply within a second. |
-| `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `send_usage_stats: false` keeps them but stops the install count, `update_channel: beta` follows every build of `main`. |
+| `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `send_usage_stats: false` keeps them but stops the install count, `update_channel: beta` follows every build of `main`, `herdr: false` makes the VS Code button open VS Code at once instead of listing herdr's directories. |
 | `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken. Safe to delete. |
 | `~/Library/Logs/fwd/fwd.log` | The log. **Show Log** in the ••• menu opens it; hold ⌥ for **Copy Log Location**. |
 

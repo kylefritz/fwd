@@ -27,21 +27,24 @@ public enum VSCode {
         app.appendingPathComponent("Contents/Resources/app/bin/\(editor.command)")
     }
 
-    /// A new window connected to `host`, with no folder open yet.
-    public static func arguments(host: String) -> [String] {
-        ["--new-window", "--remote", "ssh-remote+\(host)"]
+    /// A new window connected to `host`, opening `folder` (a path on the
+    /// remote) or no folder yet.
+    public static func arguments(host: String, folder: String? = nil) -> [String] {
+        ["--new-window", "--remote", "ssh-remote+\(host)"] + (folder.map { [$0] } ?? [])
     }
 
     /// Asks the editor at `app` to open a Remote-SSH window on `host`. It
     /// returns once the editor has the request, before the window connects.
-    public static func open(host: String, app: URL, editor: Editor) async throws {
+    public static func open(host: String, folder: String? = nil, app: URL, editor: Editor) async throws {
         // The editor would read a leading dash in the authority as an option.
         guard !host.hasPrefix("-") else { throw VSCodeError.badHost(host) }
+        // Only absolute paths, which also can't be read as an option.
+        if let folder, !folder.hasPrefix("/") { throw VSCodeError.badFolder(folder) }
         let command = commandLine(app: app, editor: editor)
         guard FileManager.default.isExecutableFile(atPath: command.path) else {
             throw VSCodeError.noCommandLine(editor.name, command.path)
         }
-        let result = await Shell.run(command.path, arguments(host: host), timeout: 20)
+        let result = await Shell.run(command.path, arguments(host: host, folder: folder), timeout: 20)
         guard result.ok else {
             let reason = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             throw VSCodeError.failed(editor.name, reason.isEmpty ? "exit status \(result.status)" : reason)
@@ -53,6 +56,7 @@ public enum VSCodeError: Error, CustomStringConvertible, Equatable {
     case notInstalled
     case customSSHConfig(String)
     case badHost(String)
+    case badFolder(String)
     case noCommandLine(String, String)
     case failed(String, String)
 
@@ -63,6 +67,7 @@ public enum VSCodeError: Error, CustomStringConvertible, Equatable {
         case .customSSHConfig(let path):
             return "fwd is using the ssh config at \(path), but VS Code reads its own, so it can't open hosts from it."
         case .badHost(let host): return "VS Code can't open a host named \(host)."
+        case .badFolder(let folder): return "VS Code can't open \(folder): it isn't a full path."
         case .noCommandLine(let name, let path): return "\(name)'s command line isn't at \(path)."
         case .failed(let name, let reason): return "\(name) couldn't open the host: \(reason)"
         }

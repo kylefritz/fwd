@@ -300,7 +300,7 @@ struct CompactHostRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if card.inConfig {
                 ScreenSharingButton(host: card.name, model: model, app: app, report: report)
-                VSCodeButton(host: card.name, app: app, report: report)
+                VSCodeButton(host: card.name, model: model, app: app, report: report)
             }
             PortField(host: card.name, model: model, prompt: "port")
                 .frame(width: 130)

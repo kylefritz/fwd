@@ -1,0 +1,102 @@
+import Foundation
+import Testing
+@testable import FwdCore
+import Yams
+
+@Suite struct HerdrTests {
+    /// A snapshot as herdr 0.9 prints it, trimmed to the fields fwd reads.
+    func snapshot(_ panes: [(cwd: String, agent: String?, status: String?)]) -> String {
+        let items = panes.map { pane in
+            """
+            {"cwd":"\(pane.cwd)","foreground_cwd":"\(pane.cwd)",\
+            "agent":\(pane.agent.map { "\"\($0)\"" } ?? "null"),\
+            "agent_status":\(pane.status.map { "\"\($0)\"" } ?? "null"),"pane_id":"w1:p1"}
+            """
+        }
+        return #"{"id":"cli:api:snapshot","result":{"type":"snapshot","snapshot":{"panes":["#
+            + items.joined(separator: ",") + "]}}}"
+    }
+
+    func output(_ json: String, home: String = "/home/me", exit: Int = 0) -> String {
+        "Welcome to devbox!\n#fwd:home \(home)\n#fwd:herdr\n\(json)\n\n#fwd:exit \(exit)\n"
+    }
+
+    @Test func listsEachDirectoryOnceWithItsMostPressingStatus() {
+        let json = snapshot([
+            ("/home/me/code/fwd", "claude", "working"),
+            ("/home/me/code/fwd", nil, nil),
+            ("/home/me/code/finance", "claude", "idle"),
+            ("/home/me/code/finance", "codex", "blocked"),
+            ("/home/me/code", nil, nil),
+            ("/srv/app", "pi", "done"),
+        ])
+        guard case .directories(let dirs) = Herdr.parse(output(json)) else {
+            Issue.record("expected directories"); return
+        }
+        #expect(dirs.map(\.display) == ["~/code/finance", "/srv/app", "~/code/fwd", "~/code"])
+        #expect(dirs.map(\.status) == [.blocked, .agent, .agent, .none])
+        #expect(dirs.map(\.name) == ["finance", "app", "fwd", "code"])
+        #expect(dirs[2].path == "/home/me/code/fwd")
+    }
+
+    @Test func theHomeDirectoryShowsAsATilde() {
+        guard case .directories(let dirs) = Herdr.parse(output(snapshot([("/home/me", nil, nil)]))) else {
+            Issue.record("expected directories"); return
+        }
+        #expect(dirs.map(\.display) == ["~"])
+        #expect(dirs.map(\.name) == ["~"])
+        #expect(Herdr.tilde("/home/meow", home: "/home/me") == "/home/meow")
+    }
+
+    @Test func saysWhenHerdrIsMissingOrNotRunning() {
+        #expect(Herdr.parse("#fwd:home /home/me\n#fwd:noherdr\n") == .notInstalled)
+        let notRunning = #"{"id":"cli:api:snapshot","error":{"code":"server_not_running","message":"no herdr server is running"}}"#
+        #expect(Herdr.parse(output(notRunning, exit: 1)) == .notRunning)
+        let other = #"{"id":"x","error":{"code":"boom","message":"something broke"}}"#
+        #expect(Herdr.parse(output(other, exit: 1)) == .failed("something broke"))
+        #expect(Herdr.parse(output("Segmentation fault", exit: 139)) == .failed("herdr didn't give a snapshot (exit status 139)."))
+        #expect(Herdr.parse("") == .failed("The host didn't answer as expected."))
+        #expect(Herdr.parse(output(snapshot([]))) == .directories([]))
+    }
+
+    /// The script itself, under sh, with a stand-in herdr where a login
+    /// PATH wouldn't find it.
+    @Test func theScriptFindsHerdrOffThePath() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-herdr-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let env = ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=\(home.path)", "/bin/sh", "-c"]
+        let script = Herdr.script.trimmingCharacters(in: .newlines)
+
+        // Unless this machine has its own herdr in one of the system folders.
+        if !["/opt/homebrew/bin/herdr", "/usr/local/bin/herdr"].contains(where: FileManager.default.isExecutableFile) {
+            let missing = await Shell.run(env[0], Array(env.dropFirst()) + [script])
+            #expect(missing.ok)
+            #expect(Herdr.parse(missing.stdout) == .notInstalled)
+        }
+
+        let bin = home.appendingPathComponent(".local/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let fake = bin.appendingPathComponent("herdr")
+        try "#!/bin/sh\n[ \"$1 $2\" = 'api snapshot' ] || exit 2\nprintf '%s\\n' '\(snapshot([("\(home.path)/code/fwd", "claude", "working")]))'\nexit 0\n"
+            .write(to: fake, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
+
+        let found = await Shell.run(env[0], Array(env.dropFirst()) + [script])
+        #expect(found.ok)
+        #expect(Herdr.parse(found.stdout) == .directories([
+            Herdr.Directory(path: "\(home.path)/code/fwd", display: "~/code/fwd", status: .agent),
+        ]), "\(found.stdout)")
+    }
+
+    @Test func theCommandSurvivesAnyLoginShell() {
+        #expect(!Herdr.script.trimmingCharacters(in: .newlines).contains("'"))
+        #expect(!Herdr.script.trimmingCharacters(in: .newlines).contains("\n"))
+        #expect(Herdr.command.hasPrefix("sh -c '"))
+    }
+
+    @Test func isOnUnlessTurnedOff() throws {
+        #expect(Preferences().herdr)
+        #expect(try YAMLDecoder().decode(Preferences.self, from: "check_for_updates: true\n").herdr)
+        #expect(try !YAMLDecoder().decode(Preferences.self, from: "herdr: false\n").herdr)
+    }
+}

@@ -1,4 +1,5 @@
 import AppKit
+import FwdCore
 import SwiftUI
 
 /// Draws at 2x on any screen, so snapshots taken on a 1x display stay sharp.
@@ -59,5 +60,32 @@ struct HeroSnapshot<Panel: View>: View {
             .padding(.trailing, 14)
         }
         .frame(width: width, height: barHeight)
+    }
+}
+
+/// `--snapshot-herdr`: the VS Code button's menu in each state, side by side,
+/// the middle one listing this Mac's own herdr. For checking the layout.
+struct HerdrSnapshot: View {
+    @State private var live: Herdr.Listing?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            menu(nil)
+            menu(live)
+            menu(.notInstalled)
+            menu(.notRunning)
+        }
+        .padding(16)
+        .task {
+            let result = await Shell.run("/bin/sh", ["-c", Herdr.script.trimmingCharacters(in: .newlines)])
+            live = Herdr.parse(result.stdout)
+        }
+    }
+
+    private func menu(_ listing: Herdr.Listing?) -> some View {
+        HerdrMenu(host: "devbox", editor: "VS Code", listing: listing, open: { _ in })
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
+            .fixedSize()
     }
 }

@@ -451,6 +451,28 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// The directories open in `host`'s herdr. Uses fwd's connection when
+    /// there is one; otherwise a one-off ssh, as VS Code is about to make its
+    /// own connection anyway.
+    public func herdrDirectories(host: String) async -> Herdr.Listing {
+        do {
+            let output: String
+            if let live = try await sessions[host]?.runIfConnected(Herdr.command) {
+                output = live
+            } else {
+                let result = await Shell.run(SSHConnection.sshPath, SSHConnection.baseOptions(paths: paths)
+                    + ["-o", "ConnectTimeout=8", "--", host, Herdr.command], timeout: 20)
+                guard result.ok else { throw SSHConnection.classify(stderr: result.stderr) }
+                output = result.stdout
+            }
+            return Herdr.parse(output)
+        } catch let error as ConnectionError {
+            return .failed("Couldn't reach \(host): \(error.message)")
+        } catch {
+            return .failed("Couldn't reach \(host): \(error.localizedDescription)")
+        }
+    }
+
     /// The Retry and Connect buttons.
     public func connect(host: String) async {
         await sessions[host]?.connect()

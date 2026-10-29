@@ -128,6 +128,13 @@ public final class HostSession {
         await settle()
     }
 
+    /// Runs `command` over the live connection, or returns nil when there
+    /// isn't one. Never connects.
+    public func runIfConnected(_ command: String) async throws -> String? {
+        guard state == .connected, let connection else { return nil }
+        return try await connection.run(command)
+    }
+
     /// Connects now because you clicked: turned a port on, Screen Sharing,
     /// Connect or Retry. Leaves a working connection alone.
     public func connect() async {

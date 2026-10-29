@@ -158,6 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]),
                           AnyView(ReportView(kind: .bug, app: self, model: model) {}.frame(width: 560)))
         }
+        if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-herdr"), flag + 1 < CommandLine.arguments.count {
+            snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]), AnyView(HerdrSnapshot()))
+        }
     }
 
     /// Development aid: `--snapshot <file.png>` draws the window to an image
@@ -464,13 +467,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return nil
     }
 
-    /// Opens a Remote-SSH window on `host` in VS Code (or Cursor).
-    func openInVSCode(host: String) async throws {
+    /// Opens a Remote-SSH window on `host` in VS Code (or Cursor), on
+    /// `folder` if given.
+    func openInVSCode(host: String, folder: String? = nil) async throws {
         if let config = paths.sshConfigOverride { throw VSCodeError.customSSHConfig(config.path) }
         guard let (editor, app) = vsCode else { throw VSCodeError.notInstalled }
-        try await VSCode.open(host: host, app: app, editor: editor)
-        model.log.write("opened \(editor.name)", host: host)
+        try await VSCode.open(host: host, folder: folder, app: app, editor: editor)
+        model.log.write("opened \(editor.name)" + (folder.map { " on \($0)" } ?? ""), host: host)
     }
+
+    /// Whether the VS Code button offers the host's herdr directories.
+    var herdrMenu: Bool { model.store.loadPreferences().herdr }
 
     /// `fwd try`: readies the build, then restarts into it a moment after
     /// returning, so the command line gets its answer first.

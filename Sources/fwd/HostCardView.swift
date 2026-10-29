@@ -83,7 +83,7 @@ struct HostCardView: View {
             Text(card.name).font(.headline).lineLimit(1).truncationMode(.middle)
             if card.inConfig {
                 ScreenSharingButton(host: card.name, model: model, app: app, report: report)
-                VSCodeButton(host: card.name, app: app, report: report)
+                VSCodeButton(host: card.name, model: model, app: app, report: report)
             }
             if card.state != .idle {
                 Image(systemName: style.symbol).foregroundStyle(style.color).font(.caption)
@@ -186,19 +186,28 @@ struct ScreenSharingButton: View {
     }
 }
 
-/// One click: open a Remote-SSH window on the host in VS Code. Shows the
-/// editor's own icon, and nothing when no such editor is installed.
+/// Opens a Remote-SSH window on the host in VS Code. Shows the editor's own
+/// icon, and nothing when no such editor is installed. With herdr on, the
+/// click opens a small menu instead: the host, or one of the directories its
+/// herdr has open. herdr is asked as the menu opens, so "Open VS Code" never
+/// waits on it.
 struct VSCodeButton: View {
     let host: String
+    let model: AppModel
     let app: AppDelegate
     let report: (Error) -> Void
 
     @State private var opening = false
     @State private var hovering = false
+    @State private var showingMenu = false
+    /// nil while herdr is being asked.
+    @State private var listing: Herdr.Listing?
+    /// Each click asks again; an older answer arriving late is dropped.
+    @State private var ask = 0
 
     var body: some View {
         if let (editor, bundle) = app.vsCode {
-            Button(action: open) {
+            Button(action: click) {
                 if opening {
                     ProgressView().controlSize(.mini)
                 } else {
@@ -208,27 +217,144 @@ struct VSCodeButton: View {
                         .overlay {
                             // Gray until hovered. App icons leave a margin
                             // around their art, so it's drawn a bit larger.
-                            Image(nsImage: AppIcon.image(bundle, gray: !hovering))
+                            Image(nsImage: AppIcon.image(bundle, gray: !hovering && !showingMenu))
                                 .resizable().interpolation(.high).scaledToFit()
                                 .scaleEffect(1.25)
-                                .opacity(hovering ? 1 : 0.75)
+                                .opacity(hovering || showingMenu ? 1 : 0.75)
                         }
                 }
             }
             .buttonStyle(.plain)
             .disabled(opening)
             .onHover { hovering = $0 }
+            .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
+                HerdrMenu(host: host, editor: editor.name, listing: listing, open: open)
+            }
             .help(Text(verbatim: "Open \(host) in \(editor.name) over Remote-SSH"))
             .accessibilityLabel(Text(verbatim: "Open \(host) in \(editor.name)"))
         }
     }
 
-    private func open() {
+    private func click() {
+        guard app.herdrMenu else { return open(nil) }
+        ask += 1
+        let mine = ask
+        listing = nil
+        showingMenu = true
+        Task {
+            let answer = await model.herdrDirectories(host: host)
+            if ask == mine { listing = answer }
+        }
+    }
+
+    private func open(_ folder: String?) {
+        showingMenu = false
         opening = true
         Task {
             defer { opening = false }
-            do { try await app.openInVSCode(host: host) } catch { report(error) }
+            do { try await app.openInVSCode(host: host, folder: folder) } catch { report(error) }
         }
+    }
+}
+
+/// The VS Code button's menu: the host itself, then herdr's directories.
+/// Drawn to look like a menu, but a popover, so the herdr part can fill in
+/// while it's open.
+struct HerdrMenu: View {
+    let host: String
+    let editor: String
+    let listing: Herdr.Listing?
+    let open: (String?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            MenuRow(action: { open(nil) }, help: "A new \(editor) window on \(host), with no folder open") {
+                Text(verbatim: "Open \(editor)")
+                Spacer(minLength: 12)
+                Text(verbatim: "~").foregroundStyle(.secondary)
+            }
+            Divider().padding(.vertical, 4).padding(.horizontal, 6)
+            Text(verbatim: "herdr").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.bottom, 2)
+            herdr
+        }
+        .padding(5)
+        .frame(minWidth: 240, maxWidth: 380, alignment: .leading)
+    }
+
+    @ViewBuilder private var herdr: some View {
+        switch listing {
+        case nil:
+            note {
+                ProgressView().controlSize(.small)
+                Text("Loading…")
+            }
+        case .notInstalled?:
+            note { Text(verbatim: "herdr isn't installed on \(host)") }
+        case .notRunning?:
+            note { Text(verbatim: "herdr isn't running on \(host)") }
+        case .failed(let why)?:
+            note { Text(why).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
+        case .directories(let dirs)?:
+            if dirs.isEmpty {
+                note { Text("No panes open in herdr") }
+            } else {
+                ForEach(dirs) { dir in
+                    MenuRow(action: { open(dir.path) }, help: "Open \(dir.path) in \(editor)") {
+                        HerdrDot(status: dir.status)
+                        Text(dir.name).lineLimit(1)
+                        Spacer(minLength: 12)
+                        Text(dir.display).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                    }
+                }
+            }
+        }
+    }
+
+    private func note<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 6, content: content)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+    }
+}
+
+/// A row that highlights under the pointer, like a menu item.
+private struct MenuRow<Label: View>: View {
+    let action: () -> Void
+    let help: String
+    @ViewBuilder let label: () -> Label
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6, content: label)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .foregroundStyle(hovering ? Color.white : Color.primary)
+                .background(hovering ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
+/// Green: an agent is running there. Orange: one is waiting on you. Gray:
+/// a pane is open with no agent.
+struct HerdrDot: View {
+    let status: Herdr.Status
+
+    var body: some View {
+        let (color, words): (Color, String) = switch status {
+        case .agent: (.green, "agent running")
+        case .blocked: (.orange, "agent waiting on you")
+        case .none: (.gray, "no agent")
+        }
+        Circle().fill(color).frame(width: 7, height: 7)
+            .help(words)
+            .accessibilityLabel(words)
     }
 }
 
