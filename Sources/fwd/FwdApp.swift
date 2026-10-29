@@ -467,7 +467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return nil
     }
 
-    /// Opens a Remote-SSH window on `host` in VS Code (or Cursor), on
+    /// Opens a Remote-SSH window on `host` in VS Code, on
     /// `folder` if given.
     func openInVSCode(host: String, folder: String? = nil) async throws {
         if let config = paths.sshConfigOverride { throw VSCodeError.customSSHConfig(config.path) }

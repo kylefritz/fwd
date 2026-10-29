@@ -41,8 +41,8 @@ fwd does the bookkeeping:
   remote and whether a connection is open through it right now.
 - 🖥️ **One-click Screen Sharing.** Opens the remote's screen over the same ssh
   connection.
-- 🧑‍💻 **One-click VS Code.** Opens a Remote-SSH window on the host in VS Code
-  (or Cursor), or from the terminal with `fwd code devbox`. If the host runs
+- 🧑‍💻 **One-click VS Code.** Opens a Remote-SSH window on the host in VS Code,
+  or from the terminal with `fwd code devbox`. If the host runs
   [herdr](https://herdr.dev), the button also lists its agents, each in the
   folder or worktree it's working in, and the repos and worktrees they use, so
   you can open one directly.

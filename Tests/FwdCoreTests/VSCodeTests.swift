@@ -45,10 +45,10 @@ import Testing
     }
 
     @Test func eachEditorKeepsItsCommandLineInTheSamePlace() {
-        let app = URL(fileURLWithPath: "/Applications/Cursor.app")
-        let cursor = VSCode.editors.first { $0.name == "Cursor" }!
-        #expect(VSCode.commandLine(app: app, editor: cursor).path
-                == "/Applications/Cursor.app/Contents/Resources/app/bin/cursor")
+        let app = URL(fileURLWithPath: "/Applications/Visual Studio Code - Insiders.app")
+        let insiders = VSCode.editors.first { $0.name == "VS Code Insiders" }!
+        #expect(VSCode.commandLine(app: app, editor: insiders).path
+                == "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders")
     }
 
     @Test func saysWhyWhenTheEditorFails() async throws {

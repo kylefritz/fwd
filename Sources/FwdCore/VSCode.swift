@@ -13,12 +13,11 @@ public enum VSCode {
         public let command: String
     }
 
-    /// Checked in order; the first one installed is used. Cursor and Insiders
-    /// are VS Code underneath and take the same `--remote` argument.
+    /// Checked in order; the first one installed is used. Insiders is VS Code
+    /// underneath and takes the same `--remote` argument.
     public static let editors = [
         Editor(name: "VS Code", bundleID: "com.microsoft.VSCode", command: "code"),
         Editor(name: "VS Code Insiders", bundleID: "com.microsoft.VSCodeInsiders", command: "code-insiders"),
-        Editor(name: "Cursor", bundleID: "com.todesktop.230313mzl4w4u92", command: "cursor"),
     ]
 
     /// The bundle's own copy of the command line. A menu bar app doesn't get
@@ -63,7 +62,7 @@ public enum VSCodeError: Error, CustomStringConvertible, Equatable {
     public var description: String {
         switch self {
         case .notInstalled:
-            return "Install VS Code (or Cursor) with the Remote - SSH extension to open hosts in it."
+            return "Install VS Code with the Remote - SSH extension to open hosts in it."
         case .customSSHConfig(let path):
             return "fwd is using the ssh config at \(path), but VS Code reads its own, so it can't open hosts from it."
         case .badHost(let host): return "VS Code can't open a host named \(host)."
