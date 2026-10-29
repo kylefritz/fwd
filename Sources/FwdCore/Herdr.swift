@@ -6,13 +6,11 @@ import Foundation
 /// nothing.
 public enum Herdr {
     /// What an agent's dot shows.
-    public enum Status: Int, Comparable, Sendable {
+    public enum Status: Sendable {
         /// Waiting on you (herdr's `blocked`).
         case blocked
         /// Running, whatever it's doing.
         case agent
-
-        public static func < (a: Status, b: Status) -> Bool { a.rawValue < b.rawValue }
     }
 
     /// One agent in a herdr pane.
@@ -67,9 +65,10 @@ public enum Herdr {
 
     /// Sends `script` as base64 piped into `sh`. The script has quotes and
     /// newlines that some login shells (csh) can't take inside `sh -c '...'`,
-    /// while base64 has nothing any shell reads specially.
+    /// while base64 has nothing any shell reads specially. Older macOS spells
+    /// the decode flag -D.
     public static func command(script: String) -> String {
-        "echo \(Data(script.utf8).base64EncodedString()) | base64 -d | sh"
+        "echo \(Data(script.utf8).base64EncodedString()) | sh -c \"base64 -d 2>/dev/null || base64 -D\" | sh"
     }
 
     /// What the menu shows, and a line for the log saying how it got there.
@@ -81,15 +80,19 @@ public enum Herdr {
     public static func parse(_ output: String) -> Listing { read(output).listing }
 
     /// Decodes the script's JSON Lines in order. Lines that aren't JSON (a
-    /// login banner, rc chatter) are skipped. Sessions that aren't running
-    /// are left out; the listing is "not running" only when none is.
+    /// login banner, rc chatter) are skipped, and so is chatter that ended
+    /// without a newline (a prompt file's `tput sgr0`) in front of a line.
+    /// Sessions that aren't running are left out; the listing is "not
+    /// running" only when none is.
     public static func read(_ output: String) -> Answer {
         var lines: [Line] = []
         var undecoded: [Substring] = []
-        for text in output.split(whereSeparator: \.isNewline) {
-            if let line = try? JSONDecoder.snakeCase.decode(Line.self, from: Data(text.utf8)) {
+        for whole in output.split(whereSeparator: \.isNewline) {
+            guard let brace = whole.firstIndex(of: "{") else { continue }
+            let text = whole[brace...]
+            if let line = try? decoder.decode(Line.self, from: Data(text.utf8)) {
                 lines.append(line)
-            } else if text.hasPrefix("{") {
+            } else {
                 undecoded.append(text)
             }
         }
@@ -113,6 +116,7 @@ public enum Herdr {
         var lastCwd: [String: String] = [:]
         var repos: [String: [Worktree]] = [:]
         var sessionsSeen = 0
+        var notRunning = 0
         var running = 0
         var failure: String?
         var session = "default"
@@ -131,6 +135,7 @@ public enum Herdr {
             } else if line.id == "cli:api:snapshot" {
                 if let error = line.error {
                     if error.code == "server_not_running" {
+                        notRunning += 1
                         notes.append("session \(session): not running")
                     } else {
                         failure = failure ?? error.message ?? error.code ?? "herdr reported an error."
@@ -153,7 +158,7 @@ public enum Herdr {
                 if let error = line.error {
                     notes.append("worktrees of \(folder): \(error.code ?? "error") \(error.message ?? "")")
                 } else {
-                    let list = (line.result?.worktrees ?? []).filter { $0.isBare != true && $0.path.hasPrefix("/") }
+                    let list = (line.result?.worktrees ?? []).filter { $0.isBare != true && $0.isPrunable != true && $0.path.hasPrefix("/") }
                     if let main = list.first(where: { $0.isLinkedWorktree != true })?.path ?? list.first?.path {
                         repos[main] = list
                         notes.append("worktrees of \(folder): \(list.count - 1) linked")
@@ -171,6 +176,9 @@ public enum Herdr {
             let listing: Listing
             if let failure {
                 listing = .failed(failure)
+            } else if undecoded.contains(where: { $0.contains("\"cli:api:snapshot\"") }) || notRunning < sessionsSeen {
+                // A snapshot came back that couldn't be read, or none did.
+                listing = .failed("herdr's snapshot couldn't be read.")
             } else if sessionsSeen > 0 {
                 listing = .notRunning
             } else {
@@ -185,8 +193,11 @@ public enum Herdr {
         for (session, pane) in panes {
             guard pane.agent != nil, let paneFolder = pane.folder else { continue }
             let key = "\(session) \(pane.paneId ?? "")"
+            // herdr names the pane's Claude Code session; an older herdr
+            // doesn't, so its process is matched to a session file instead.
             let found = claudePID[key].flatMap { claude[$0] }
-            let cwd = found.flatMap { found in found.sessionId.flatMap { lastCwd[$0] } ?? found.cwd }
+            let sessionId = pane.agentSession?.value ?? found?.sessionId
+            let cwd = sessionId.flatMap { lastCwd[$0] } ?? found?.cwd
             let worked = cwd.flatMap { $0.hasPrefix("/") ? $0 : nil } ?? paneFolder
             // A transcript can end in a subfolder (after a cd); open the
             // checkout or worktree that holds it.
@@ -279,8 +290,7 @@ public enum Herdr {
         }
     }
 
-    struct Reply: Decodable {
-        struct Result: Decodable { let snapshot: Snapshot }
+    enum Reply {
         struct Snapshot: Decodable {
             let panes: [Pane]
             let workspaces: [Workspace]?
@@ -290,8 +300,6 @@ public enum Herdr {
             let label: String?
         }
         struct Failure: Decodable { let code: String?; let message: String? }
-        let result: Result?
-        let error: Failure?
     }
 
     struct Worktree: Decodable {
@@ -299,6 +307,8 @@ public enum Herdr {
         let branch: String?
         let isLinkedWorktree: Bool?
         let isBare: Bool?
+        /// Its folder is gone; git just hasn't pruned it yet.
+        let isPrunable: Bool?
     }
 
     struct Pane: Decodable {
@@ -309,6 +319,9 @@ public enum Herdr {
         let agent: String?
         let agentStatus: String?
         let terminalTitleStripped: String?
+        let agentSession: AgentSession?
+
+        struct AgentSession: Decodable { let value: String? }
 
         /// Where the pane's foreground program is, else the pane's own folder.
         var folder: String? {
@@ -318,10 +331,10 @@ public enum Herdr {
     }
 }
 
-extension JSONDecoder {
-    static var snakeCase: JSONDecoder {
+extension Herdr {
+    static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return decoder
-    }
+    }()
 }

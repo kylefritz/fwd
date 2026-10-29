@@ -155,8 +155,10 @@ struct HostCardView: View {
 }
 
 /// One click: forward the host's port 5900 and open it in Screen Sharing.
-/// Grayed out once a scan has found nothing listening on 5900; until fwd
-/// has scanned the host, it can't know, so the button stays on.
+/// Dimmed once a scan has found nothing listening on 5900; until fwd has
+/// scanned the host, it can't know. Dimmed, it still takes a click, which
+/// explains how to turn Screen Sharing on (macOS doesn't show the tooltip of
+/// a disabled button).
 struct ScreenSharingButton: View {
     let host: String
     /// From the last scan; nil when the host hasn't been scanned.
@@ -179,7 +181,7 @@ struct ScreenSharingButton: View {
         }
         .buttonStyle(.plain).foregroundStyle(.secondary)
         .opacity(unavailable ? 0.35 : 1)
-        .disabled(opening || unavailable)
+        .disabled(opening)
         .help(Text(verbatim: unavailable
             ? "\(host) isn't sharing its screen: nothing listens on port 5900 there"
             : "Screen Sharing: forward \(host)'s port 5900 and open it"))
@@ -250,6 +252,9 @@ struct VSCodeButton: View {
             model.log.write("VS Code: herdr is off in config.yaml, opening directly", host: host)
             return open(nil)
         }
+        // VS Code can't open hosts from another ssh config, so no row would
+        // work; go straight to saying so.
+        guard model.paths.sshConfigOverride == nil else { return open(nil) }
         ask += 1
         let mine = ask
         listing = nil

@@ -465,28 +465,49 @@ public final class AppModel: ObservableObject {
             log.write("herdr: the check script is missing from fwd", host: host)
             return .failed("fwd's herdr check is missing. Reinstall fwd.")
         }
+        let command = Herdr.command(script: script)
+        var output: String?
+        var stderr = ""
         do {
-            let command = Herdr.command(script: script)
-            let output: String
             if let live = try await sessions[host]?.runIfConnected(command) {
                 log.write("herdr: asked over fwd's connection (\(elapsed()), \(live.utf8.count) bytes)", host: host)
                 output = live
-            } else {
-                log.write("herdr: not connected, asking with a one-off ssh", host: host)
-                let result = await Shell.run(SSHConnection.sshPath, SSHConnection.baseOptions(paths: paths)
-                    + ["-o", "ConnectTimeout=8", "--", host, command], timeout: 20)
-                guard result.ok else { throw SSHConnection.classify(stderr: result.stderr) }
-                log.write("herdr: one-off ssh answered (\(elapsed()), \(result.stdout.utf8.count) bytes)", host: host)
-                output = result.stdout
             }
-            let answer = Herdr.read(output)
-            log.write("herdr: \(answer.details)", host: host)
-            return answer.listing
         } catch {
-            let message = (error as? ConnectionError)?.message ?? error.localizedDescription
-            log.write("herdr: failed after \(elapsed()): \(message)", host: host)
-            return .failed("Couldn't reach \(host): \(message)")
+            // The link dropped, or the check hung past the timeout.
+            let message = (error as? ConnectionError)?.message ?? "\(error)"
+            log.write("herdr: asking over fwd's connection failed after \(elapsed()): \(message); trying a one-off ssh", host: host)
         }
+        if output == nil {
+            log.write("herdr: asking with a one-off ssh", host: host)
+            // ControlMaster=no with a control path in fwd's socket folder:
+            // ssh finds no master there and connects directly, a
+            // ControlMaster in the user's config can't leave one behind, and
+            // UserSessions doesn't mistake this ssh for the user's own.
+            let controlPath = paths.socketDir.appendingPathComponent("herdr-check").path
+            let result = await Shell.run(SSHConnection.sshPath, SSHConnection.baseOptions(paths: paths)
+                + ["-o", "ConnectTimeout=8", "-o", "ControlMaster=no", "-o", "ControlPath=\(controlPath)",
+                   "--", host, command], timeout: 20)
+            if result.status == -1 {
+                log.write("herdr: the one-off ssh timed out after \(elapsed())", host: host)
+                return .failed("\(host) didn't answer within 20 seconds.")
+            }
+            guard result.ok else {
+                let message = SSHConnection.classify(stderr: result.stderr).message
+                log.write("herdr: the one-off ssh failed after \(elapsed()): \(message)", host: host)
+                return .failed("Couldn't reach \(host): \(message)")
+            }
+            log.write("herdr: one-off ssh answered (\(elapsed()), \(result.stdout.utf8.count) bytes)", host: host)
+            output = result.stdout
+            stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let answer = Herdr.read(output ?? "")
+        log.write("herdr: \(answer.details)", host: host)
+        // Why the script printed nothing useful (no base64, say) is on stderr.
+        if case .failed = answer.listing, !stderr.isEmpty {
+            log.write("herdr: the host also said: \(stderr.prefix(300))", host: host)
+        }
+        return answer.listing
     }
 
     /// The Retry and Connect buttons.

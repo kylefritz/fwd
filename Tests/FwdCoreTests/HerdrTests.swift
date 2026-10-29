@@ -11,6 +11,9 @@ import Yams
         var status: String? = nil
         var title: String? = nil
         var workspace = "w1"
+        /// herdr's name for the pane's Claude Code session, which newer
+        /// herdr includes.
+        var session: String? = nil
     }
 
     /// A snapshot as herdr 0.9 prints it, trimmed to the fields fwd reads.
@@ -18,7 +21,8 @@ import Yams
         func q(_ s: String?) -> String { s.map { "\"\($0)\"" } ?? "null" }
         let items = panes.map {
             #"{"pane_id":"\#($0.id)","workspace_id":"\#($0.workspace)","cwd":"\#($0.cwd)","foreground_cwd":"\#($0.cwd)","#
-                + #""agent":\#(q($0.agent)),"agent_status":\#(q($0.status)),"terminal_title_stripped":\#(q($0.title))}"#
+                + #""agent":\#(q($0.agent)),"agent_status":\#(q($0.status)),"terminal_title_stripped":\#(q($0.title))"#
+                + ($0.session.map { #","agent_session":{"agent":"claude","kind":"id","value":"\#($0)"}"# } ?? "") + "}"
         }
         let ws = workspaces.map { #"{"workspace_id":"\#($0.0)","label":"\#($0.1)"}"# }
         return #"{"id":"cli:api:snapshot","result":{"type":"snapshot","snapshot":{"panes":["#
@@ -135,7 +139,8 @@ import Yams
             {"id":"cli:worktree:list","result":{"worktrees":[\#
             {"branch":"common/master/latest","is_bare":false,"is_linked_worktree":false,"path":"/home/me/av"},\#
             {"branch":"kf/trt-stable-sort","is_bare":false,"is_linked_worktree":true,"path":"/home/me/av-trt-stable-sort"},\#
-            {"branch":"kf/delve-preview-ci","is_bare":false,"is_linked_worktree":true,"path":"/home/me/av-delve-previews"}]}}
+            {"branch":"kf/delve-preview-ci","is_bare":false,"is_linked_worktree":true,"path":"/home/me/av-delve-previews"},\#
+            {"branch":"kf/gone","is_bare":false,"is_linked_worktree":true,"is_prunable":true,"path":"/home/me/av-gone"}]}}
             """#
         let notRepo = #"{"error":{"code":"not_git_worktree","message":"Herdr worktree actions require a path inside a Git work tree"},"id":"cli:worktree:list"}"#
         let snap = snapshot([P(cwd: "/home/me/av", agent: "claude", status: "idle", title: "x"),
@@ -167,7 +172,7 @@ import Yams
         #expect(answer.details.contains("session old: not running"), "\(answer.details)")
     }
 
-    @Test func saysWhenHerdrIsMissingOrNotRunning() {
+    @Test func saysWhenHerdrIsMissingOrNotRunning() throws {
         #expect(Herdr.parse("{\"home\":\"/home/me\"}\n{\"noherdr\":true}\n") == .notInstalled)
         #expect(Herdr.parse(output(notRunning, exit: 1)) == .notRunning)
         #expect(Herdr.parse(report([S(exit: 1, snapshot: notRunning), S(name: "work", exit: 1, snapshot: notRunning)])) == .notRunning)
@@ -175,6 +180,13 @@ import Yams
         #expect(Herdr.parse(output(other, exit: 1)) == .failed("something broke"))
         #expect(Herdr.parse(output("Segmentation fault", exit: 139)) == .failed("herdr didn't give a snapshot."))
         #expect(Herdr.parse("") == .failed("The host didn't answer as expected."))
+        // A snapshot that doesn't decode is a failure, not "not running".
+        let odd = #"{"id":"cli:api:snapshot","result":{"snapshot":{"panes":"oops"}}}"#
+        #expect(Herdr.parse(output(odd)) == .failed("herdr's snapshot couldn't be read."))
+        // rc chatter that ended without a newline, in front of the first line.
+        let chatter = "\u{1b}(B\u{1b}[m" + output(snapshot([P(cwd: "/home/me/av", agent: "claude", status: "idle", title: "x")]))
+            .replacingOccurrences(of: "Welcome to devbox!\n", with: "")
+        #expect(try #require(found(Herdr.parse(chatter))).agents.map(\.title) == ["x"])
         #expect(Herdr.parse(output(snapshot([]))) == .found(Herdr.Found(agents: [], folders: [])))
         #expect(Herdr.tilde("/home/meow", home: "/home/me") == "/home/meow")
     }
@@ -209,18 +221,25 @@ import Yams
             .write(to: projects.appendingPathComponent("abc.jsonl"), atomically: true, encoding: .utf8)
 
         let fake = bin.appendingPathComponent("herdr")
-        let main = snapshot([P(cwd: "\(h)/code/fwd", agent: "claude", status: "working", title: "fwd release")])
-        let work = snapshot([P(cwd: "\(h)/code/corridor")])
-        // Two sessions, as `herdr session list --json` prints them.
+        try "{\"type\":\"user\",\"cwd\":\"\(h)/code/corridor-y\"}\n"
+            .write(to: projects.appendingPathComponent("def.jsonl"), atomically: true, encoding: .utf8)
+        // The default session is from an older herdr, without agent_session,
+        // so its panes' processes are asked; one of those calls crashes.
+        let main = snapshot([P(cwd: "\(h)/code/fwd", agent: "claude", status: "working", title: "fwd release"),
+                             P(id: "w2:p1", cwd: "\(h)/code/fwd", workspace: "w2")])
+        // "my work" names its Claude Code session, and has a space in its name.
+        let work = snapshot([P(cwd: "\(h)/code/corridor", agent: "claude", status: "idle", title: "corridor", session: "def")])
+        // Three sessions, as `herdr session list --json` prints them; "old"
+        // isn't running, so it's never asked.
         try """
             #!/bin/sh
             case "$*" in
             "--version") echo "herdr 0.9.5" ;;
-            "session list --json") echo '{"sessions":[{"default":true,"name":"default","running":true},{"default":false,"name":"work","running":true}]}' ;;
+            "session list --json") echo '{"sessions":[{"default":true,"name":"default","running":true},{"default":false,"name":"my work","running":true},{"default":false,"name":"old","running":false}]}' ;;
             "--session default api snapshot") echo '\(main)' ;;
-            "--session work api snapshot") echo '\(work)' ;;
+            "--session my work api snapshot") echo '\(work)' ;;
             "--session default pane process-info --pane w1:p1") echo '{"id":"cli:pane:process_info","result":{"process_info":{"pane_id":"w1:p1","foreground_processes":[{"pid":4242,"name":"2.1.311","argv0":"claude"}]}}}' ;;
-            "--session work pane process-info --pane w1:p1") echo "thread 'main' panicked" >&2; exit 101 ;;
+            "--session default pane process-info --pane w2:p1") echo "thread 'main' panicked" >&2; exit 101 ;;
             "worktree list --cwd \(h)/code/fwd") echo '{"id":"cli:worktree:list","result":{"worktrees":[{"branch":"main","is_linked_worktree":false,"path":"\(h)/code/fwd"},{"branch":"kf/x","is_linked_worktree":true,"path":"\(h)/code/fwd-x"}]}}' ;;
             "worktree list --cwd "*) echo '{"id":"cli:worktree:list","error":{"code":"not_git_worktree"}}' >&2; exit 1 ;;
             *) exit 2 ;;
@@ -234,11 +253,15 @@ import Yams
             #expect((try? JSONSerialization.jsonObject(with: Data(line.utf8))) != nil, "every line is JSON: \(line)")
         }
         // A crash is reported as JSON and logged; the rest still reads.
-        #expect(Herdr.read(ran.stdout).details.contains(
-            "herdr --session work pane process-info --pane w1:p1 failed, exit 101: thread 'main' panicked"), "\(ran.stdout)")
+        let details = Herdr.read(ran.stdout).details
+        #expect(details.contains(
+            "herdr --session default pane process-info --pane w2:p1 failed, exit 101: thread 'main' panicked"), "\(ran.stdout)")
+        #expect(!ran.stdout.contains("--session old"), "a session that isn't running isn't asked")
         #expect(Herdr.parse(ran.stdout) == .found(Herdr.Found(
             agents: [Herdr.Agent(id: "default w1:p1", title: "fwd release", path: "\(h)/code/fwd-x",
-                                 display: "~/code/fwd-x", status: .agent)],
+                                 display: "~/code/fwd-x", status: .agent),
+                     Herdr.Agent(id: "my work w1:p1", title: "corridor", path: "\(h)/code/corridor-y",
+                                 display: "~/code/corridor-y", status: .agent)],
             folders: [
                 Herdr.Directory(path: "\(h)/code/corridor", display: "~/code/corridor"),
                 Herdr.Directory(path: "\(h)/code/fwd", display: "~/code/fwd", branch: "main"),
@@ -249,9 +272,10 @@ import Yams
     /// Base64 and a pipe: nothing any login shell, csh included, reads specially.
     @Test func theCommandSurvivesAnyLoginShell() throws {
         let command = Herdr.command(script: try Herdr.loadScript())
-        let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= |-")
-        #expect(command.allSatisfy(allowed.contains))
-        #expect(command.hasSuffix(" | base64 -d | sh"))
+        // Nothing csh, fish or any sh expands: no single quotes, $, !,
+        // backticks or newlines.
+        #expect(!command.contains(where: "'$!`\n".contains))
+        #expect(command.hasSuffix(#" | sh -c "base64 -d 2>/dev/null || base64 -D" | sh"#))
     }
 
     @Test func isOnUnlessTurnedOff() throws {
