@@ -67,6 +67,9 @@ public struct HostCard: Identifiable, Equatable, Sendable {
     public let lastError: String?
     /// False when the host has history but is no longer in the ssh config.
     public let inConfig: Bool
+    /// Whether the host's Screen Sharing port is listening, from the last
+    /// scan. nil until fwd has scanned it.
+    public var screenSharing: Bool? = nil
     public var id: String { name }
     /// Hosts with nothing to show are listed compactly instead of as a card.
     public var isProminent: Bool { !pills.isEmpty || !configPills.isEmpty }
@@ -451,6 +454,62 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// The directories open in `host`'s herdr. Uses fwd's connection when
+    /// there is one; otherwise a one-off ssh, as VS Code is about to make its
+    /// own connection anyway. Logs each step, since what herdr reports on a
+    /// remote can't be seen from here.
+    public func herdrDirectories(host: String) async -> Herdr.Listing {
+        let started = Date()
+        func elapsed() -> String { "\(Int(Date().timeIntervalSince(started) * 1000))ms" }
+        guard let script = try? Herdr.loadScript() else {
+            log.write("herdr: the check script is missing from fwd", host: host)
+            return .failed("fwd's herdr check is missing. Reinstall fwd.")
+        }
+        let command = Herdr.command(script: script)
+        var output: String?
+        var stderr = ""
+        do {
+            if let live = try await sessions[host]?.runIfConnected(command) {
+                log.write("herdr: asked over fwd's connection (\(elapsed()), \(live.utf8.count) bytes)", host: host)
+                output = live
+            }
+        } catch {
+            // The link dropped, or the check hung past the timeout.
+            let message = (error as? ConnectionError)?.message ?? "\(error)"
+            log.write("herdr: asking over fwd's connection failed after \(elapsed()): \(message); trying a one-off ssh", host: host)
+        }
+        if output == nil {
+            log.write("herdr: asking with a one-off ssh", host: host)
+            // ControlMaster=no with a control path in fwd's socket folder:
+            // ssh finds no master there and connects directly, a
+            // ControlMaster in the user's config can't leave one behind, and
+            // UserSessions doesn't mistake this ssh for the user's own.
+            let controlPath = paths.socketDir.appendingPathComponent("herdr-check").path
+            let result = await Shell.run(SSHConnection.sshPath, SSHConnection.baseOptions(paths: paths)
+                + ["-o", "ConnectTimeout=8", "-o", "ControlMaster=no", "-o", "ControlPath=\(controlPath)",
+                   "--", host, command], timeout: 20)
+            if result.status == -1 {
+                log.write("herdr: the one-off ssh timed out after \(elapsed())", host: host)
+                return .failed("\(host) didn't answer within 20 seconds.")
+            }
+            guard result.ok else {
+                let message = SSHConnection.classify(stderr: result.stderr).message
+                log.write("herdr: the one-off ssh failed after \(elapsed()): \(message)", host: host)
+                return .failed("Couldn't reach \(host): \(message)")
+            }
+            log.write("herdr: one-off ssh answered (\(elapsed()), \(result.stdout.utf8.count) bytes)", host: host)
+            output = result.stdout
+            stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let answer = Herdr.read(output ?? "")
+        log.write("herdr: \(answer.details)", host: host)
+        // Why the script printed nothing useful (no base64, say) is on stderr.
+        if case .failed = answer.listing, !stderr.isEmpty {
+            log.write("herdr: the host also said: \(stderr.prefix(300))", host: host)
+        }
+        return answer.listing
+    }
+
     /// The Retry and Connect buttons.
     public func connect(host: String) async {
         await sessions[host]?.connect()
@@ -602,7 +661,8 @@ public final class AppModel: ObservableObject {
             return HostCard(name: name, state: state,
                             statusLine: statusLine(state, session: session),
                             pills: pills, configPills: configPills,
-                            lastError: session?.lastError, inConfig: inConfig.contains(name))
+                            lastError: session?.lastError, inConfig: inConfig.contains(name),
+                            screenSharing: session?.listening.map { $0.contains(ScreenSharing.remotePort) })
         }
         // Hosts in use first, in config order; the stable sort keeps that order.
         built.sort { rank($0) < rank($1) }

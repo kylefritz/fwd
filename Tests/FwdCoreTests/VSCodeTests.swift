@@ -33,11 +33,22 @@ import Testing
         #expect(try String(contentsOf: argsFile, encoding: .utf8) == "--new-window\n--remote\nssh-remote+devbox\n")
     }
 
+    @Test func opensAFolderOnTheHostWhenGivenOne() async throws {
+        let (app, argsFile) = try fakeApp()
+        defer { try? FileManager.default.removeItem(at: app) }
+        try await VSCode.open(host: "devbox", folder: "/home/me/code/fwd", app: app, editor: editor)
+        #expect(try String(contentsOf: argsFile, encoding: .utf8)
+                == "--new-window\n--remote\nssh-remote+devbox\n/home/me/code/fwd\n")
+        await #expect(throws: VSCodeError.badFolder("--help")) {
+            try await VSCode.open(host: "devbox", folder: "--help", app: app, editor: editor)
+        }
+    }
+
     @Test func eachEditorKeepsItsCommandLineInTheSamePlace() {
-        let app = URL(fileURLWithPath: "/Applications/Cursor.app")
-        let cursor = VSCode.editors.first { $0.name == "Cursor" }!
-        #expect(VSCode.commandLine(app: app, editor: cursor).path
-                == "/Applications/Cursor.app/Contents/Resources/app/bin/cursor")
+        let app = URL(fileURLWithPath: "/Applications/Visual Studio Code - Insiders.app")
+        let insiders = VSCode.editors.first { $0.name == "VS Code Insiders" }!
+        #expect(VSCode.commandLine(app: app, editor: insiders).path
+                == "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders")
     }
 
     @Test func saysWhyWhenTheEditorFails() async throws {

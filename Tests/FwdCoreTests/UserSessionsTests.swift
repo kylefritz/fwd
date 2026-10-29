@@ -37,6 +37,8 @@ import Testing
         // fwd's own masters and control commands use its socket directory.
         #expect(hosts(["ssh -M -N -S \(socketDir)/abc.sock -o BatchMode=yes mbar"]).isEmpty)
         #expect(hosts(["ssh -S \(socketDir)/abc.sock -O check mbar"]).isEmpty)
+        // The one-off ssh for the VS Code button's herdr check.
+        #expect(hosts(["ssh -o BatchMode=yes -o ControlMaster=no -o ControlPath=\(socketDir)/herdr-check -- devbox echo"]).isEmpty)
         // Config queries, and the stdio hop ProxyJump runs, aren't sessions.
         #expect(hosts(["ssh -G mbar", "ssh -W [devbox]:22 jumphost"]).isEmpty)
         // Other programs, including ones whose name ends in ssh.

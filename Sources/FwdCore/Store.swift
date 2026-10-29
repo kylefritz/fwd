@@ -99,11 +99,14 @@ public struct Preferences: Codable, Equatable, Sendable {
     /// The install-counting ping that goes with each update check. Turning
     /// it off leaves update checks alone.
     public var sendUsageStats: Bool = true
+    /// The VS Code button lists the directories open in the host's herdr.
+    public var herdr: Bool = true
 
     enum CodingKeys: String, CodingKey {
         case checkForUpdates = "check_for_updates"
         case updateChannel = "update_channel"
         case sendUsageStats = "send_usage_stats"
+        case herdr
     }
 
     public init() {}
@@ -114,6 +117,7 @@ public struct Preferences: Codable, Equatable, Sendable {
         let channel = try? c.decodeIfPresent(String.self, forKey: .updateChannel)
         updateChannel = channel.flatMap { UpdateChannel(rawValue: $0.lowercased()) } ?? .stable
         sendUsageStats = (try? c.decodeIfPresent(Bool.self, forKey: .sendUsageStats)) ?? true
+        herdr = (try? c.decodeIfPresent(Bool.self, forKey: .herdr)) ?? true
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -121,6 +125,7 @@ public struct Preferences: Codable, Equatable, Sendable {
         try c.encode(checkForUpdates, forKey: .checkForUpdates)
         try c.encode(updateChannel.rawValue, forKey: .updateChannel)
         try c.encode(sendUsageStats, forKey: .sendUsageStats)
+        try c.encode(herdr, forKey: .herdr)
     }
 }
 
@@ -212,8 +217,8 @@ public final class Store {
 
     /// What a new config.yaml says: every option, commented out at its default.
     public static let preferencesTemplate = """
-        # fwd settings. Uncomment a line to change it; fwd reads this file at
-        # each update check, so no restart is needed.
+        # fwd settings. Uncomment a line to change it; fwd reads this file
+        # whenever it needs a setting, so no restart is needed.
 
         # Check GitHub for new versions of fwd.
         # check_for_updates: true
@@ -225,6 +230,10 @@ public final class Store {
 
         # stable gets tagged releases; beta gets every build of main.
         # update_channel: stable
+
+        # Clicking a host's VS Code button lists the directories open in its
+        # herdr (herdr.dev), to open one directly. false opens VS Code at once.
+        # herdr: true
 
         """
 

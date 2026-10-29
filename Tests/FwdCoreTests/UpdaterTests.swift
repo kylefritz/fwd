@@ -11,6 +11,7 @@ final class TestHTTPServer: @unchecked Sendable {
     private(set) var hits: [String] = []
     /// Each request's full text, headers included.
     private(set) var requests: [String] = []
+    private var stopped = false
 
     init() throws {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -31,14 +32,24 @@ final class TestHTTPServer: @unchecked Sendable {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
         }
         port = Int(in_port_t(bigEndian: actual.sin_port))
+        // Only this thread closes the socket, once stop() is called. Closing
+        // it from the test's thread let tests running in parallel be handed
+        // the same descriptor number while this thread was between requests;
+        // its next accept() then took another test's request and answered
+        // from this server's routes (a 404).
         Thread.detachNewThread { [weak self] in
-            while true {
+            defer { close(fd) }
+            var ready = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            while let server = self, !server.isStopped {
+                guard poll(&ready, 1, 50) > 0 else { continue }
                 let client = accept(fd, nil, nil)
                 if client < 0 { return }
-                self?.serve(client)
+                server.serve(client)
             }
         }
     }
+
+    private var isStopped: Bool { lock.withLock { stopped } }
 
     func route(_ path: String, status: Int = 200, body: Data, headers: [String: String] = [:]) {
         lock.lock()
@@ -74,9 +85,9 @@ final class TestHTTPServer: @unchecked Sendable {
         }
     }
 
+    /// The serving thread closes the socket within 50ms.
     func stop() {
-        shutdown(fd, SHUT_RDWR)
-        close(fd)
+        lock.withLock { stopped = true }
     }
 }
 
@@ -520,6 +531,22 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(Updater.bundleVersion(installed) == "1.0.0")
         let leftovers = try FileManager.default.contentsOfDirectory(atPath: installed.deletingLastPathComponent().path)
         #expect(leftovers == ["fwd.app"])
+    }
+
+    /// A stopped server's thread must never answer for the next one. The
+    /// next server is often handed the stopped one's descriptor number, and
+    /// the old thread, finishing a request, used to accept on it.
+    @Test func aStoppedServerNeverAnswersForTheNextOne() async throws {
+        for _ in 0..<300 {
+            let old = try TestHTTPServer()
+            _ = try await URLSession.shared.data(from: old.url("/anything"))
+            old.stop()
+            let next = try TestHTTPServer()
+            defer { next.stop() }
+            next.route("/here", body: Data("yes".utf8))
+            let (_, response) = try await URLSession.shared.data(from: next.url("/here"))
+            try #require((response as? HTTPURLResponse)?.statusCode == 200, "the stopped server answered")
+        }
     }
 
     // MARK: fwd try

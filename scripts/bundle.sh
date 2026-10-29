@@ -22,6 +22,8 @@ cp "$BINARY" "$APP/Contents/MacOS/fwd"
 # and the Homebrew formula point to.
 cp "$CLI" "$APP/Contents/Resources/bin/fwd"
 chmod 755 "$APP/Contents/Resources/bin/fwd"
+# The check fwd runs on a host for the VS Code button's herdr menu.
+cp scripts/herdr.sh "$APP/Contents/Resources/herdr.sh"
 
 # The icon is drawn by the app itself (Sources/fwd/Icon.swift).
 ICONSET="build/AppIcon.iconset"
