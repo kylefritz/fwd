@@ -80,121 +80,98 @@ public enum Herdr {
 
     public static func parse(_ output: String) -> Listing { read(output).listing }
 
-    /// Reads the script's output. Lines before the first marker (a login
-    /// banner, an rc file's chatter) are skipped. Sessions that aren't running
+    /// Decodes the script's JSON Lines in order. Lines that aren't JSON (a
+    /// login banner, rc chatter) are skipped. Sessions that aren't running
     /// are left out; the listing is "not running" only when none is.
     public static func read(_ output: String) -> Answer {
-        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
-        func value(_ name: String) -> String? {
-            for line in lines {
-                guard let range = line.range(of: "#fwd:\(name) ") else { continue }
-                let value = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
-                return value.isEmpty ? nil : value
+        var lines: [Line] = []
+        var undecoded: [Substring] = []
+        for text in output.split(whereSeparator: \.isNewline) {
+            if let line = try? JSONDecoder.snakeCase.decode(Line.self, from: Data(text.utf8)) {
+                lines.append(line)
+            } else if text.hasPrefix("{") {
+                undecoded.append(text)
             }
-            return nil
         }
-        /// Each `#fwd:<marker>` block: its header's words and the lines up to
-        /// the closing marker.
-        func blocks(_ marker: String, until close: (String) -> Bool) -> [(header: String, body: [String], close: String?)] {
-            var out: [(String, [String], String?)] = []
-            var index = lines.startIndex
-            while let start = lines[index...].firstIndex(where: { $0 == "#fwd:\(marker)" || $0.hasPrefix("#fwd:\(marker) ") }) {
-                let end = lines[(start + 1)...].firstIndex(where: close) ?? lines.endIndex
-                let header = String(lines[start].dropFirst("#fwd:\(marker)".count)).trimmingCharacters(in: .whitespaces)
-                out.append((header, Array(lines[(start + 1)..<end]), end < lines.endIndex ? lines[end] : nil))
-                index = min(end + 1, lines.endIndex)
-            }
-            return out
+        guard lines.contains(where: { $0.home != nil }) else {
+            let shown = output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)
+            return Answer(listing: .failed("The host didn't answer as expected."),
+                          details: "no JSON lines in the output: \(shown.isEmpty ? "(empty)" : String(shown))")
         }
-
-        if lines.contains(where: { $0.contains("#fwd:noherdr") }) {
+        if lines.contains(where: { $0.noherdr == true }) {
             return Answer(listing: .notInstalled, details: "herdr not found on the PATH or in the usual folders")
         }
-        guard let path = value("herdr") else {
-            let shown = output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200)
-            return Answer(listing: .failed("The host didn't answer as expected."),
-                          details: "no herdr marker in the output: \(shown.isEmpty ? "(empty)" : String(shown))")
-        }
-        let home = value("home")
-        var notes = ["\(value("version") ?? "herdr (unknown version)") at \(path)", "home \(home ?? "unknown")"]
+        let home = lines.lazy.compactMap(\.home).first
+        let herdr = lines.first { $0.herdr != nil }
+        var notes = ["\(herdr?.version ?? "herdr (unknown version)") at \(herdr?.herdr ?? "?")", "home \(home ?? "unknown")"]
+        for text in undecoded { notes.append("couldn't read: \(text.prefix(200))") }
 
-        // Snapshots, one per running session.
         var panes: [(session: String, pane: Pane)] = []
         var labels: [String: String] = [:]
+        var claudePID: [String: Int] = [:]
+        var claude: [Int: (name: String?, sessionId: String?, cwd: String?)] = [:]
+        var lastCwd: [String: String] = [:]
+        var repos: [String: [Worktree]] = [:]
+        var sessionsSeen = 0
         var running = 0
         var failure: String?
-        for block in blocks("session", until: { $0.hasPrefix("#fwd:exit") }) {
-            let name = block.header
-            let json = block.body.joined(separator: "\n")
-            let exit = block.close.map { String($0.dropFirst("#fwd:exit".count)).trimmingCharacters(in: .whitespaces) } ?? "?"
-            guard let reply = try? JSONDecoder.snakeCase.decode(Reply.self, from: Data(json.utf8)) else {
-                failure = failure ?? "herdr didn't give a snapshot (exit status \(exit))."
-                notes.append("session \(name): no snapshot, exit \(exit): \(json.prefix(200))")
-                continue
-            }
-            if let error = reply.error {
-                if error.code == "server_not_running" {
-                    notes.append("session \(name): not running")
-                } else {
-                    failure = failure ?? error.message ?? error.code ?? "herdr reported an error."
-                    notes.append("session \(name): error \(error.code ?? "?"): \(error.message ?? "")")
+        var session = "default"
+        var folder = "?"
+
+        for line in lines {
+            if let name = line.session {
+                session = name
+                sessionsSeen += 1
+            } else if let name = line.worktreesOf {
+                folder = name
+            } else if let failed = line.failed {
+                // A herdr command that printed something other than JSON.
+                notes.append("\(failed) failed, exit \(line.exit.map(String.init) ?? "?"): \(line.output?.prefix(200) ?? "")")
+                if failed.contains(" api snapshot") { failure = failure ?? "herdr didn't give a snapshot." }
+            } else if line.id == "cli:api:snapshot" {
+                if let error = line.error {
+                    if error.code == "server_not_running" {
+                        notes.append("session \(session): not running")
+                    } else {
+                        failure = failure ?? error.message ?? error.code ?? "herdr reported an error."
+                        notes.append("session \(session): error \(error.code ?? "?"): \(error.message ?? "")")
+                    }
+                } else if let snapshot = line.result?.snapshot {
+                    running += 1
+                    panes += snapshot.panes.map { (session, $0) }
+                    for ws in snapshot.workspaces ?? [] { labels["\(session) \(ws.workspaceId)"] = ws.label }
+                    notes.append("session \(session): \(snapshot.panes.count) panes, \(snapshot.panes.filter { $0.agent != nil }.count) with an agent")
                 }
-                continue
+            } else if line.id == "cli:pane:process_info", let info = line.result?.processInfo {
+                // On macOS the process name is Claude Code's version, so go by argv0.
+                if let pane = info.paneId, let found = info.foregroundProcesses.first(where: {
+                    ($0.argv0.map { ($0 as NSString).lastPathComponent } ?? $0.name) == "claude"
+                }) {
+                    claudePID["\(session) \(pane)"] = found.pid
+                }
+            } else if line.id == "cli:worktree:list" {
+                if let error = line.error {
+                    notes.append("worktrees of \(folder): \(error.code ?? "error") \(error.message ?? "")")
+                } else {
+                    let list = (line.result?.worktrees ?? []).filter { $0.isBare != true && $0.path.hasPrefix("/") }
+                    if let main = list.first(where: { $0.isLinkedWorktree != true })?.path ?? list.first?.path {
+                        repos[main] = list
+                        notes.append("worktrees of \(folder): \(list.count - 1) linked")
+                    }
+                }
+            } else if let pid = line.pid {
+                // ~/.claude/sessions/<pid>.json
+                claude[pid] = (line.name, line.sessionId, line.cwd)
+            } else if let id = line.sessionId, let cwd = line.lastCwd {
+                lastCwd[id] = cwd
             }
-            let snapshot = reply.result?.snapshot
-            let mine = snapshot?.panes ?? []
-            running += 1
-            panes += mine.map { (name, $0) }
-            for ws in snapshot?.workspaces ?? [] { labels["\(name) \(ws.workspaceId)"] = ws.label }
-            notes.append("session \(name): \(mine.count) panes, \(mine.filter { $0.agent != nil }.count) with an agent")
-        }
-
-        // Which Claude Code process is in each pane.
-        var claudePID: [String: Int] = [:]
-        for block in blocks("process", until: { $0 == "#fwd:end" }) {
-            let info = try? JSONDecoder.snakeCase.decode(ProcessReply.self, from: Data(block.body.joined(separator: "\n").utf8))
-            let processes = info?.result?.processInfo.foregroundProcesses ?? []
-            // On macOS the process name is Claude Code's version, so go by argv0.
-            if let claude = processes.first(where: { ($0.argv0.map { ($0 as NSString).lastPathComponent } ?? $0.name) == "claude" }) {
-                claudePID[block.header] = claude.pid
-            } else if info == nil {
-                notes.append("pane \(block.header): no process info: \(block.body.joined().prefix(120))")
-            }
-        }
-
-        // Claude Code's sessions, by process, with where each last worked.
-        var claude: [Int: (name: String?, cwd: String?)] = [:]
-        for block in blocks("claude", until: { $0 == "#fwd:end" }) {
-            let json = block.body.filter { !$0.hasPrefix("#fwd:") }.joined(separator: "\n")
-            guard let session = try? JSONDecoder().decode(ClaudeSession.self, from: Data(json.utf8)) else { continue }
-            let last = block.body.first { $0.hasPrefix("#fwd:lastcwd ") }.map { String($0.dropFirst("#fwd:lastcwd ".count)) }
-            claude[session.pid] = (session.name, last ?? session.cwd)
-        }
-
-        // The worktrees of each folder a pane is in.
-        var repos: [String: [Worktree]] = [:]
-        for block in blocks("worktrees", until: { $0 == "#fwd:end" }) {
-            let folder = block.header
-            let json = block.body.joined(separator: "\n")
-            guard let reply = try? JSONDecoder.snakeCase.decode(WorktreeReply.self, from: Data(json.utf8)) else {
-                notes.append("worktrees of \(folder): no answer: \(json.prefix(200))")
-                continue
-            }
-            if let error = reply.error {
-                notes.append("worktrees of \(folder): \(error.code ?? "error") \(error.message ?? "")")
-                continue
-            }
-            let list = (reply.result?.worktrees ?? []).filter { $0.isBare != true && $0.path.hasPrefix("/") }
-            guard let main = list.first(where: { $0.isLinkedWorktree != true })?.path ?? list.first?.path else { continue }
-            repos[main] = list
-            notes.append("worktrees of \(folder): \(list.count - 1) linked")
         }
 
         guard running > 0 else {
             let listing: Listing
             if let failure {
                 listing = .failed(failure)
-            } else if notes.contains(where: { $0.hasPrefix("session ") }) {
+            } else if sessionsSeen > 0 {
                 listing = .notRunning
             } else {
                 listing = .failed("herdr didn't list any sessions.")
@@ -202,17 +179,24 @@ public enum Herdr {
             return Answer(listing: listing, details: notes.joined(separator: "; "))
         }
 
+        let checkouts = Set(repos.values.flatMap { $0.map(\.path) })
+
         var agents: [Agent] = []
         for (session, pane) in panes {
             guard pane.agent != nil, let paneFolder = pane.folder else { continue }
             let key = "\(session) \(pane.paneId ?? "")"
             let found = claudePID[key].flatMap { claude[$0] }
-            let folder = found?.cwd.flatMap { $0.hasPrefix("/") ? $0 : nil } ?? paneFolder
+            let cwd = found.flatMap { found in found.sessionId.flatMap { lastCwd[$0] } ?? found.cwd }
+            let worked = cwd.flatMap { $0.hasPrefix("/") ? $0 : nil } ?? paneFolder
+            // A transcript can end in a subfolder (after a cd); open the
+            // checkout or worktree that holds it.
+            let folder = checkouts.filter { worked == $0 || worked.hasPrefix($0 + "/") }.max { $0.count < $1.count } ?? worked
             let title = [pane.terminalTitleStripped, found?.name, labels["\(session) \(pane.workspaceId ?? "")"], pane.agent]
                 .compactMap { $0?.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? "agent"
             agents.append(Agent(id: key, title: title, path: folder, display: tilde(folder, home: home),
                                 status: pane.agentStatus == "blocked" ? .blocked : .agent))
             notes.append("agent \(title) [\(key)\(claudePID[key].map { ", claude pid \($0)" } ?? "")] in \(folder)"
+                + (worked == folder ? "" : " (worked in \(worked))")
                 + (folder == paneFolder ? "" : " (pane in \(paneFolder))"))
         }
 
@@ -254,6 +238,47 @@ public enum Herdr {
         return path
     }
 
+    /// One line of what scripts/herdr.sh prints: one of the script's own
+    /// markers, a herdr reply, a Claude Code session file, or a failure.
+    /// Every field is optional; which ones are set says which it is.
+    struct Line: Decodable {
+        // The script's own lines.
+        let home: String?
+        let noherdr: Bool?
+        let herdr: String?
+        let version: String?
+        let session: String?
+        let worktreesOf: String?
+        let lastCwd: String?
+        let failed: String?
+        let exit: Int?
+        let output: String?
+        // herdr's replies.
+        let id: String?
+        let result: Result?
+        let error: Reply.Failure?
+        // ~/.claude/sessions/<pid>.json
+        let pid: Int?
+        let sessionId: String?
+        let name: String?
+        let cwd: String?
+
+        struct Result: Decodable {
+            let snapshot: Reply.Snapshot?
+            let processInfo: ProcessInfo?
+            let worktrees: [Worktree]?
+        }
+        struct ProcessInfo: Decodable {
+            let paneId: String?
+            let foregroundProcesses: [Process]
+        }
+        struct Process: Decodable {
+            let pid: Int
+            let name: String?
+            let argv0: String?
+        }
+    }
+
     struct Reply: Decodable {
         struct Result: Decodable { let snapshot: Snapshot }
         struct Snapshot: Decodable {
@@ -267,30 +292,6 @@ public enum Herdr {
         struct Failure: Decodable { let code: String?; let message: String? }
         let result: Result?
         let error: Failure?
-    }
-
-    struct ProcessReply: Decodable {
-        struct Result: Decodable { let processInfo: Info }
-        struct Info: Decodable { let foregroundProcesses: [Process] }
-        struct Process: Decodable {
-            let pid: Int
-            let name: String?
-            let argv0: String?
-        }
-        let result: Result?
-    }
-
-    /// `~/.claude/sessions/<pid>.json`, written by each running Claude Code.
-    struct ClaudeSession: Decodable {
-        let pid: Int
-        let name: String?
-        let cwd: String?
-    }
-
-    struct WorktreeReply: Decodable {
-        struct Result: Decodable { let worktrees: [Worktree] }
-        let result: Result?
-        let error: Reply.Failure?
     }
 
     struct Worktree: Decodable {

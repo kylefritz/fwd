@@ -40,7 +40,7 @@ jobs:
           sh -n scripts/herdr.sh
           sh scripts/herdr.sh > herdr.txt
           cat herdr.txt
-          grep -x '#fwd:noherdr' herdr.txt
+          grep -x '{"noherdr":true}' herdr.txt
 
   stats-server:
     name: Stats server (Worker)
