@@ -63,6 +63,33 @@ import Yams
         #expect(dirs[2].path == "/home/me/code/fwd")
     }
 
+    /// vdesk: every pane sits in ~/av while the agents work in its worktrees,
+    /// which are folders beside it. Those come from `herdr worktree list`.
+    @Test func listsTheWorktreesOfEachFolderUnderIt() {
+        let home = "/home/kfritz"
+        let worktrees = #"""
+            {"id":"cli:worktree:list","result":{"source":{"repo_root":"/home/kfritz/av"},"type":"worktree_list","worktrees":[\#
+            {"branch":"common/master/latest","is_bare":false,"is_linked_worktree":false,"path":"/home/kfritz/av"},\#
+            {"branch":"kf/trt-stable-sort","is_bare":false,"is_linked_worktree":true,"path":"/home/kfritz/av-trt-stable-sort"},\#
+            {"branch":"kf/delve-preview-ci","is_bare":false,"is_linked_worktree":true,"path":"/home/kfritz/av-delve-previews"}]}}
+            """#
+        let notRepo = #"{"error":{"code":"not_git_worktree","message":"Herdr worktree actions require a path inside a Git work tree"},"id":"cli:worktree:list"}"#
+        let text = output(snapshot([("/home/kfritz/av", "claude", "idle"), ("/home/kfritz/av", nil, nil),
+                                    ("/home/kfritz/notes", nil, nil)]), home: home)
+            + "#fwd:worktrees /home/kfritz/av\n\(worktrees)\n\n#fwd:end\n"
+            + "#fwd:worktrees /home/kfritz/notes\n\(notRepo)\n\n#fwd:end\n"
+        let answer = Herdr.read(text)
+        guard case .directories(let dirs) = answer.listing else {
+            Issue.record("expected directories: \(answer)"); return
+        }
+        #expect(dirs.map(\.display) == ["~/av", "~/av-delve-previews", "~/av-trt-stable-sort", "~/notes"])
+        #expect(dirs.map(\.worktreeOf) == [nil, "/home/kfritz/av", "/home/kfritz/av", nil])
+        #expect(dirs.map(\.branch) == [nil, "kf/delve-preview-ci", "kf/trt-stable-sort", nil])
+        #expect(dirs[0].status == .agent)
+        #expect(answer.details.contains("worktrees of /home/kfritz/av: 2 linked"), "\(answer.details)")
+        #expect(answer.details.contains("worktrees of /home/kfritz/notes: not_git_worktree"), "\(answer.details)")
+    }
+
     @Test func theHomeDirectoryShowsAsATilde() {
         guard case .directories(let dirs) = Herdr.parse(output(snapshot([("/home/me", nil, nil)]))) else {
             Issue.record("expected directories"); return
@@ -109,6 +136,8 @@ import Yams
             "session list --json") echo '{"sessions":[{"default":true,"name":"default","running":true},{"default":false,"name":"work","running":true}]}' ;;
             "--session default api snapshot") echo '\(snapshot([("\(home.path)/code/fwd", "claude", "working")]))' ;;
             "--session work api snapshot") echo '\(snapshot([("\(home.path)/code/corridor", nil, nil)]))' ;;
+            "worktree list --cwd \(home.path)/code/fwd") echo '{"result":{"worktrees":[{"branch":"main","is_linked_worktree":false,"path":"\(home.path)/code/fwd"},{"branch":"kf/x","is_linked_worktree":true,"path":"\(home.path)/code/fwd-x"}]}}' ;;
+            "worktree list --cwd "*) echo '{"error":{"code":"not_git_worktree"}}' ;;
             *) exit 2 ;;
             esac
             """.write(to: fake, atomically: true, encoding: .utf8)
@@ -118,6 +147,8 @@ import Yams
         #expect(found.ok)
         #expect(Herdr.parse(found.stdout) == .directories([
             Herdr.Directory(path: "\(home.path)/code/fwd", display: "~/code/fwd", status: .agent),
+            Herdr.Directory(path: "\(home.path)/code/fwd-x", display: "~/code/fwd-x", status: .none,
+                            worktreeOf: "\(home.path)/code/fwd", branch: "kf/x"),
             Herdr.Directory(path: "\(home.path)/code/corridor", display: "~/code/corridor", status: .none),
         ]), "\(found.stdout)")
     }

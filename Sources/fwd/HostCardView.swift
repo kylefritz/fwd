@@ -319,10 +319,22 @@ struct HerdrMenu: View {
             } else {
                 ForEach(dirs) { dir in
                     MenuRow(action: { open(dir.path) }, help: "Open \(dir.path) in \(editor)") {
-                        HerdrDot(status: dir.status)
-                        Text(dir.name).lineLimit(1)
-                        Spacer(minLength: 12)
-                        Text(dir.display).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                        if dir.worktreeOf != nil {
+                            // A worktree of the folder above it.
+                            Image(systemName: "arrow.triangle.branch").font(.caption2)
+                                .foregroundStyle(.secondary).frame(width: 7)
+                                .padding(.leading, 12)
+                                .accessibilityLabel("worktree")
+                            Text(dir.name).lineLimit(1)
+                            Spacer(minLength: 12)
+                            Text(dir.branch ?? dir.display).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.middle)
+                        } else {
+                            HerdrDot(status: dir.status)
+                            Text(dir.name).lineLimit(1)
+                            Spacer(minLength: 12)
+                            Text(dir.display).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                        }
                     }
                 }
             }

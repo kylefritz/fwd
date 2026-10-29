@@ -477,7 +477,7 @@ public final class AppModel: ObservableObject {
             let answer = Herdr.read(output)
             log.write("herdr: \(answer.details)", host: host)
             if case .directories(let dirs) = answer.listing {
-                log.write("herdr: listing \(dirs.map { "\($0.display) (\($0.status))" }.joined(separator: ", "))", host: host)
+                log.write("herdr: listing \(dirs.map { "\($0.display) (\($0.worktreeOf == nil ? "\($0.status)" : "worktree of \($0.worktreeOf!)"))" }.joined(separator: ", "))", host: host)
             }
             return answer.listing
         } catch {
