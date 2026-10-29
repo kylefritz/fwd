@@ -140,7 +140,7 @@ import Yams
         defer { try? FileManager.default.removeItem(at: home) }
         let env = ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=\(home.path)", "/bin/sh", "-c"]
         // The command exactly as fwd sends it.
-        let script = Herdr.command
+        let script = Herdr.command(script: try Herdr.loadScript())
 
         // Unless this machine has its own herdr in one of the system folders.
         if !["/opt/homebrew/bin/herdr", "/usr/local/bin/herdr"].contains(where: FileManager.default.isExecutableFile) {
@@ -193,18 +193,12 @@ import Yams
             ])), "\(ran.stdout)")
     }
 
-    @Test func scriptMatchesTheFileInScripts() throws {
-        let file = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("scripts/herdr.sh")
-        #expect(try String(contentsOf: file, encoding: .utf8) == Herdr.script)
-    }
-
     /// Base64 and a pipe: nothing any login shell, csh included, reads specially.
-    @Test func theCommandSurvivesAnyLoginShell() {
+    @Test func theCommandSurvivesAnyLoginShell() throws {
+        let command = Herdr.command(script: try Herdr.loadScript())
         let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/= |-")
-        #expect(Herdr.command.allSatisfy(allowed.contains))
-        #expect(Herdr.command.hasSuffix(" | base64 -d | sh"))
+        #expect(command.allSatisfy(allowed.contains))
+        #expect(command.hasSuffix(" | base64 -d | sh"))
     }
 
     @Test func isOnUnlessTurnedOff() throws {

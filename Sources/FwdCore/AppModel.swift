@@ -462,14 +462,15 @@ public final class AppModel: ObservableObject {
         let started = Date()
         func elapsed() -> String { "\(Int(Date().timeIntervalSince(started) * 1000))ms" }
         do {
+            let command = Herdr.command(script: try Herdr.loadScript())
             let output: String
-            if let live = try await sessions[host]?.runIfConnected(Herdr.command) {
+            if let live = try await sessions[host]?.runIfConnected(command) {
                 log.write("herdr: asked over fwd's connection (\(elapsed()), \(live.utf8.count) bytes)", host: host)
                 output = live
             } else {
                 log.write("herdr: not connected, asking with a one-off ssh", host: host)
                 let result = await Shell.run(SSHConnection.sshPath, SSHConnection.baseOptions(paths: paths)
-                    + ["-o", "ConnectTimeout=8", "--", host, Herdr.command], timeout: 20)
+                    + ["-o", "ConnectTimeout=8", "--", host, command], timeout: 20)
                 guard result.ok else { throw SSHConnection.classify(stderr: result.stderr) }
                 log.write("herdr: one-off ssh answered (\(elapsed()), \(result.stdout.utf8.count) bytes)", host: host)
                 output = result.stdout
@@ -478,6 +479,10 @@ public final class AppModel: ObservableObject {
             log.write("herdr: \(answer.details)", host: host)
             return answer.listing
         } catch {
+            if let error = error as? HerdrError {
+                log.write("herdr: \(error)", host: host)
+                return .failed(error.description)
+            }
             let message = (error as? ConnectionError)?.message ?? error.localizedDescription
             log.write("herdr: failed after \(elapsed()): \(message)", host: host)
             return .failed("Couldn't reach \(host): \(message)")

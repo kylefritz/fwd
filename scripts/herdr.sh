@@ -1,9 +1,9 @@
 # What a host's herdr has open, for fwd's VS Code menu. Read-only.
 #
 # fwd sends this whole file to the remote and parses what it prints in
-# Herdr.read (Sources/FwdCore/Herdr.swift). Herdr.script must stay identical
-# to this file; a test checks. Each part of the output follows a `#fwd:`
-# marker line. herdr's exit status is printed instead of returned, so its
+# Herdr.read (Sources/FwdCore/Herdr.swift). The app carries it in
+# Contents/Resources (scripts/bundle.sh copies it there). Each part of the
+# output follows a `#fwd:` marker line. herdr's exit status is printed instead of returned, so its
 # errors come back as output rather than as an ssh failure. Every command that
 # could read stdin gets /dev/null, because sh is reading this script from it.
 
