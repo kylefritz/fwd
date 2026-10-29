@@ -461,8 +461,12 @@ public final class AppModel: ObservableObject {
     public func herdrDirectories(host: String) async -> Herdr.Listing {
         let started = Date()
         func elapsed() -> String { "\(Int(Date().timeIntervalSince(started) * 1000))ms" }
+        guard let script = try? Herdr.loadScript() else {
+            log.write("herdr: the check script is missing from fwd", host: host)
+            return .failed("fwd's herdr check is missing. Reinstall fwd.")
+        }
         do {
-            let command = Herdr.command(script: try Herdr.loadScript())
+            let command = Herdr.command(script: script)
             let output: String
             if let live = try await sessions[host]?.runIfConnected(command) {
                 log.write("herdr: asked over fwd's connection (\(elapsed()), \(live.utf8.count) bytes)", host: host)
@@ -479,10 +483,6 @@ public final class AppModel: ObservableObject {
             log.write("herdr: \(answer.details)", host: host)
             return answer.listing
         } catch {
-            if let error = error as? HerdrError {
-                log.write("herdr: \(error)", host: host)
-                return .failed(error.description)
-            }
             let message = (error as? ConnectionError)?.message ?? error.localizedDescription
             log.write("herdr: failed after \(elapsed()): \(message)", host: host)
             return .failed("Couldn't reach \(host): \(message)")

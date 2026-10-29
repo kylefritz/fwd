@@ -60,14 +60,9 @@ public enum Herdr {
     /// it there); a build run from the source tree, and the tests, read it
     /// from scripts/.
     public static func loadScript() throws -> String {
-        let source = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("scripts/herdr.sh")
-        let candidates = [Bundle.main.url(forResource: "herdr", withExtension: "sh"), source].compactMap { $0 }
-        for url in candidates {
-            if let text = try? String(contentsOf: url, encoding: .utf8) { return text }
-        }
-        throw HerdrError.scriptMissing(candidates.map(\.path))
+        let url = Bundle.main.url(forResource: "herdr", withExtension: "sh")
+            ?? URL(fileURLWithPath: #filePath).appendingPathComponent("../../../scripts/herdr.sh").standardized
+        return try String(contentsOf: url, encoding: .utf8)
     }
 
     /// Sends `script` as base64 piped into `sh`. The script has quotes and
@@ -318,17 +313,6 @@ public enum Herdr {
         var folder: String? {
             guard let path = foregroundCwd ?? cwd, path.hasPrefix("/") else { return nil }
             return path
-        }
-    }
-}
-
-public enum HerdrError: Error, CustomStringConvertible {
-    case scriptMissing([String])
-
-    public var description: String {
-        switch self {
-        case .scriptMissing(let paths):
-            return "fwd's herdr check is missing (looked in \(paths.joined(separator: ", "))). Reinstall fwd."
         }
     }
 }
