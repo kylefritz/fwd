@@ -84,7 +84,7 @@ struct HerdrSnapshot: View {
 
     private func menu(_ listing: Herdr.Listing?) -> some View {
         HerdrMenu(host: "devbox", editor: "VS Code", listing: listing, open: { _ in })
-            .background(.background, in: RoundedRectangle(cornerRadius: 8))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3)))
             .fixedSize()
     }

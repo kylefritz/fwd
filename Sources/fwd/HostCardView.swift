@@ -239,8 +239,6 @@ struct VSCodeButton: View {
             .onHover { hovering = $0 }
             .popover(isPresented: $showingMenu, arrowEdge: .bottom) {
                 HerdrMenu(host: host, editor: editor.name, listing: listing, open: open)
-                    // Opaque, so the card behind doesn't show through the rows.
-                    .presentationBackground(.background)
             }
             .help(Text(verbatim: "Open \(host) in \(editor.name) over Remote-SSH"))
             .accessibilityLabel(Text(verbatim: "Open \(host) in \(editor.name)"))
