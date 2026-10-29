@@ -71,6 +71,21 @@ import Testing
         await rig.model.shutdown()
     }
 
+    @Test func cardsKnowWhetherTheHostSharesItsScreenOnceScanned() async throws {
+        let rig = try Rig()
+        rig.box.listening = "#fwd:ss\nLISTEN 0 128 0.0.0.0:5900 0.0.0.0:*\n"
+        await rig.model.start(runTimer: false)
+        try await eventually("cards built") { rig.card("homelab") != nil }
+        #expect(rig.card("homelab")?.screenSharing == nil, "not scanned yet")
+        try await rig.model.add(host: "homelab", text: "3000")
+        try await eventually("scanned") { rig.card("homelab")?.screenSharing == true }
+
+        rig.box.listening = "#fwd:ss\n"
+        try await rig.model.add(host: "staging", text: "3000")
+        try await eventually("scanned") { rig.card("staging")?.screenSharing == false }
+        await rig.model.shutdown()
+    }
+
     @Test func badInputIsRejectedAndNothingIsStored() async throws {
         let rig = try Rig()
         await rig.model.start(runTimer: false)

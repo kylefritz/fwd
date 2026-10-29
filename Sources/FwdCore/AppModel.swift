@@ -67,6 +67,9 @@ public struct HostCard: Identifiable, Equatable, Sendable {
     public let lastError: String?
     /// False when the host has history but is no longer in the ssh config.
     public let inConfig: Bool
+    /// Whether the host's Screen Sharing port is listening, from the last
+    /// scan. nil until fwd has scanned it.
+    public var screenSharing: Bool? = nil
     public var id: String { name }
     /// Hosts with nothing to show are listed compactly instead of as a card.
     public var isProminent: Bool { !pills.isEmpty || !configPills.isEmpty }
@@ -624,7 +627,8 @@ public final class AppModel: ObservableObject {
             return HostCard(name: name, state: state,
                             statusLine: statusLine(state, session: session),
                             pills: pills, configPills: configPills,
-                            lastError: session?.lastError, inConfig: inConfig.contains(name))
+                            lastError: session?.lastError, inConfig: inConfig.contains(name),
+                            screenSharing: session?.listening.map { $0.contains(ScreenSharing.remotePort) })
         }
         // Hosts in use first, in config order; the stable sort keeps that order.
         built.sort { rank($0) < rank($1) }

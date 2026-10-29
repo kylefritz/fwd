@@ -82,8 +82,8 @@ struct HostCardView: View {
         return HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(card.name).font(.headline).lineLimit(1).truncationMode(.middle)
             if card.inConfig {
-                ScreenSharingButton(host: card.name, model: model, app: app, report: report)
                 VSCodeButton(host: card.name, model: model, app: app, report: report)
+                ScreenSharingButton(host: card.name, available: card.screenSharing, model: model, app: app, report: report)
             }
             if card.state != .idle {
                 Image(systemName: style.symbol).foregroundStyle(style.color).font(.caption)
@@ -155,13 +155,19 @@ struct HostCardView: View {
 }
 
 /// One click: forward the host's port 5900 and open it in Screen Sharing.
+/// Grayed out once a scan has found nothing listening on 5900; until fwd
+/// has scanned the host, it can't know, so the button stays on.
 struct ScreenSharingButton: View {
     let host: String
+    /// From the last scan; nil when the host hasn't been scanned.
+    let available: Bool?
     let model: AppModel
     let app: AppDelegate
     let report: (Error) -> Void
 
     @State private var opening = false
+
+    private var unavailable: Bool { available == false }
 
     var body: some View {
         Button(action: open) {
@@ -172,9 +178,13 @@ struct ScreenSharingButton: View {
             }
         }
         .buttonStyle(.plain).foregroundStyle(.secondary)
-        .disabled(opening)
-        .help(Text(verbatim: "Screen Sharing: forward \(host)'s port 5900 and open it"))
-        .accessibilityLabel(Text(verbatim: "Share the screen of \(host)"))
+        .opacity(unavailable ? 0.35 : 1)
+        .disabled(opening || unavailable)
+        .help(Text(verbatim: unavailable
+            ? "\(host) isn't sharing its screen: nothing listens on port 5900 there"
+            : "Screen Sharing: forward \(host)'s port 5900 and open it"))
+        .accessibilityLabel(Text(verbatim: unavailable
+            ? "Screen Sharing is off on \(host)" : "Share the screen of \(host)"))
     }
 
     private func open() {
