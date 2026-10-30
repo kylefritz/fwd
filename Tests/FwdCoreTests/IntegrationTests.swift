@@ -182,6 +182,50 @@ import Testing
         }
     }
 
+    @Test func aBrowserSignInIsWaitedForPastTheConnectTimeout() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let log = Log(file: server.paths.logFile)
+        // Gives up after 7 seconds without a sign-in; this one takes 8.
+        let conn = SSHConnection(host: SSHTestServer.signInHost, paths: server.paths, log: log, connectTimeout: 1)
+        try await conn.start()
+        #expect(await conn.isAlive())
+        await conn.stop()
+    }
+
+    @Test func aBrowserSignInThatNeverFinishesNeedsAttention() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let log = Log(file: server.paths.logFile)
+        let conn = SSHConnection(host: SSHTestServer.signInNeverHost, paths: server.paths, log: log,
+                                 connectTimeout: 1, signInTimeout: 2)
+        do {
+            try await conn.start()
+            Issue.record("connected without a sign-in")
+        } catch ConnectionError.needsAttention(let message) {
+            #expect(message.contains("sign in"))
+        }
+    }
+
+    @Test func aStopWhileTheConfigIsReadKeepsSSHFromStarting() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        // The test config plus a rule that takes two seconds to evaluate.
+        let config = server.dir.appendingPathComponent("slow_config")
+        try (String(contentsOf: server.paths.sshConfig, encoding: .utf8)
+             + "Match originalhost \(SSHTestServer.goodHost) exec \"sleep 2\"\n")
+            .write(to: config, atomically: true, encoding: .utf8)
+        var paths = server.paths
+        paths.sshConfigOverride = config
+        let conn = SSHConnection(host: SSHTestServer.goodHost, paths: paths, log: Log(file: paths.logFile))
+
+        let starting = Task { try await conn.start() }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        await conn.stop()
+        await #expect(throws: ConnectionError.self) { try await starting.value }
+        #expect(conn.masterPID == nil)
+    }
+
     @Test func anUnreachableHostKeepsRetrying() async throws {
         let server = try SSHTestServer()
         defer { server.cleanup() }
@@ -226,7 +270,8 @@ import Testing
     @Test func hostListComesFromTheTestConfig() throws {
         let server = try SSHTestServer()
         defer { server.cleanup() }
-        #expect(SSHConfig.hosts(configPath: server.paths.sshConfig) == [SSHTestServer.goodHost, SSHTestServer.secondHost, SSHTestServer.badKeyHost])
+        #expect(SSHConfig.hosts(configPath: server.paths.sshConfig) == [SSHTestServer.goodHost, SSHTestServer.secondHost, SSHTestServer.badKeyHost,
+                 SSHTestServer.signInHost, SSHTestServer.signInNeverHost])
     }
 }
 

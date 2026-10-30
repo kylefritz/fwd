@@ -198,6 +198,10 @@ final class SSHTestServer {
     static let goodHost = "testbox"
     static let secondHost = "testbox2"
     static let badKeyHost = "badkey"
+    /// Behind a sign-in proxy like cloudflared: it asks for a browser sign-in,
+    /// then connects once that's done (after 8 seconds) or never.
+    static let signInHost = "signin"
+    static let signInNeverHost = "signin-never"
 
     init() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-sshd-\(UUID().uuidString.prefix(8))")
@@ -250,10 +254,20 @@ final class SSHTestServer {
         }
         let forwards = "  LocalForward \(configLocalForward) 127.0.0.1:\(configLocalForward)\n  RemoteForward \(configRemoteForward) 127.0.0.1:\(configRemoteForward)"
         try (host(Self.goodHost, key: "userkey", extra: forwards) + host(Self.secondHost, key: "userkey")
-            + host(Self.badKeyHost, key: "wrongkey") + "Host pattern-*\n  User nobody\n")
+            + host(Self.badKeyHost, key: "wrongkey")
+            + host(Self.signInHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 8))
+            + host(Self.signInNeverHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 600))
+            + "Host pattern-*\n  User nobody\n")
             .write(to: paths.sshConfig, atomically: true, encoding: .utf8)
 
         try start()
+    }
+
+    /// Prints cloudflared's sign-in lines, waits as if for the browser, then
+    /// connects to the server.
+    private static func signInProxy(port: Int, wait: Int) -> String {
+        "  ProxyCommand sh -c 'echo \"A browser window should have opened at the following URL:\" >&2;"
+            + " echo \"https://example.com/cdn-cgi/access/cli\" >&2; sleep \(wait); exec nc 127.0.0.1 \(port)'"
     }
 
     private static func run(_ exe: String, _ args: [String]) throws {

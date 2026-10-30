@@ -37,6 +37,8 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     private let paths: Paths
     private let log: Log
     private let connectTimeout: Int
+    /// How long to wait for you once a sign-in proxy has opened a browser.
+    private let signInTimeout: TimeInterval
     let socketPath: String
 
     private let lock = NSLock()
@@ -45,11 +47,12 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     private var ready = false
     private var stopping = false
 
-    public init(host: String, paths: Paths, log: Log, connectTimeout: Int = 8) {
+    public init(host: String, paths: Paths, log: Log, connectTimeout: Int = 8, signInTimeout: TimeInterval = 180) {
         self.host = host
         self.paths = paths
         self.log = log
         self.connectTimeout = connectTimeout
+        self.signInTimeout = signInTimeout
         // One socket per connection, not per host: a stale connection being
         // stopped must never remove or close the one that replaced it.
         let name = Paths.shortHash(host + "\u{0}" + paths.configDir.path) + "-" + UUID().uuidString.prefix(6)
@@ -138,6 +141,14 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         guard socketPath.utf8.count < 100 else {
             throw ConnectionError.failed("Control socket path is too long: \(socketPath)")
         }
+        lock.withLock { stopping = false }
+
+        // ssh's ConnectTimeout also bounds the wait for the server's banner,
+        // which a sign-in proxy holds back until you've signed in. Give a
+        // proxied host the whole sign-in time; the deadline below still
+        // gives up on it as quickly as any other unless a sign-in starts.
+        let proxied = await usesProxyCommand()
+        let sshTimeout = proxied ? max(connectTimeout, Int(signInTimeout)) : connectTimeout
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: Self.sshPath)
@@ -145,7 +156,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             "-M", "-N", "-S", socketPath,
             "-o", "ExitOnForwardFailure=no",
             "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
-            "-o", "ConnectTimeout=\(connectTimeout)",
+            "-o", "ConnectTimeout=\(sshTimeout)",
             "-o", "ControlPersist=no",
             // The master must stay our child so its exit can be observed.
             "-o", "ForkAfterAuthentication=no",
@@ -175,11 +186,18 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             }
         }
 
-        lock.withLock {
+        // stop() may have come in while the proxy check ran, before there
+        // was a process for it to stop.
+        let stopped = lock.withLock { () -> Bool in
+            if stopping { return true }
             self.process = process
             stderrLines = []
             ready = false
-            stopping = false
+            return false
+        }
+        if stopped {
+            log.write("stopped before ssh started", host: host)
+            throw ConnectionError.failed("Stopped")
         }
 
         do {
@@ -188,8 +206,16 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             throw ConnectionError.unreachable("Couldn't start ssh: \(error.localizedDescription)")
         }
 
-        let deadline = Date().addingTimeInterval(TimeInterval(connectTimeout) + 6)
+        var deadline = Date().addingTimeInterval(TimeInterval(connectTimeout) + 6)
+        var signingIn = false
         while Date() < deadline {
+            // The ssh that opened the browser connects by itself once you've
+            // signed in, so wait for you instead of killing it.
+            if !signingIn, Self.asksForBrowserSignIn(collectedStderr()) {
+                signingIn = true
+                deadline = max(deadline, Date().addingTimeInterval(signInTimeout))
+                log.write("waiting up to \(Int(signInTimeout))s for you to sign in in the browser", host: host)
+            }
             if !process.isRunning {
                 // Give the pipe a moment to deliver the last lines.
                 try? await Task.sleep(nanoseconds: 50_000_000)
@@ -198,6 +224,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             if FileManager.default.fileExists(atPath: socketPath),
                await control(["-O", "check"], timeout: 5).ok {
                 lock.withLock { ready = true }
+                if signingIn { log.write("signed in", host: host) }
                 return
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -223,6 +250,30 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         return stderrLines.joined(separator: "\n")
     }
 
+    /// Whether the host's ssh config sends it through a ProxyCommand, which
+    /// is where sign-in proxies like cloudflared live.
+    /// Logs only the answer, never the command itself, which may hold a token.
+    private func usesProxyCommand() async -> Bool {
+        let result = await Shell.run(Self.sshPath, base + ["-G", "--", host], timeout: 5)
+        guard result.ok else {
+            let why = result.status == -1 ? "timed out" : Self.lastLine(result.stderr.isEmpty ? "exit \(result.status)" : result.stderr)
+            log.write("couldn't read the ssh config (\(why)); connecting without waiting for a sign-in", host: host)
+            return false
+        }
+        let proxied = result.stdout.split(whereSeparator: \.isNewline).contains { $0.hasPrefix("proxycommand ") }
+        if proxied {
+            log.write("goes through a ProxyCommand; ssh may wait \(Int(signInTimeout))s for a sign-in", host: host)
+        }
+        return proxied
+    }
+
+    /// A sign-in proxy has opened a browser and is waiting for you.
+    static func asksForBrowserSignIn(_ stderr: String) -> Bool {
+        let phrases = ["open the following URL and log in", "should have opened at the following URL"]
+        let lowered = stderr.lowercased()
+        return phrases.contains { lowered.contains($0.lowercased()) }
+    }
+
     static func lastLine(_ text: String) -> String {
         text.split(whereSeparator: \.isNewline).last.map(String.init) ?? text
     }
@@ -237,13 +288,12 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             "No more authentication methods", "sign_and_send_pubkey",
             "Bad configuration option", "Bad owner or permissions",
         ]
-        // A sign-in proxy that opened a browser. ssh then usually times out,
-        // which would otherwise read as "try again" and open another tab.
-        let browserSignIn = ["open the following URL and log in", "should have opened at the following URL"]
-        let lowered = stderr.lowercased()
-        if browserSignIn.contains(where: { lowered.contains($0.lowercased()) }) {
+        // A sign-in proxy that opened a browser and wasn't answered in time.
+        // Retrying by itself would open another tab.
+        if asksForBrowserSignIn(stderr) {
             return .needsAttention("This host wants you to sign in in a browser. Open in Terminal to sign in, then Retry.")
         }
+        let lowered = stderr.lowercased()
         let message = stderr.isEmpty ? "ssh exited without a message" : lastLine(stderr)
         if needsHuman.contains(where: { lowered.contains($0.lowercased()) }) {
             return .needsAttention(message)
