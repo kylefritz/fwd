@@ -88,6 +88,9 @@ public final class NameProxy: @unchecked Sendable {
     private let queue = DispatchQueue(label: "fwd.names")
     private var listener: NWListener?
     private var open: [ObjectIdentifier: NWConnection] = [:]
+    /// The last route logged for each address, since fwd's pages reload
+    /// themselves every few seconds.
+    private var logged: [String: String] = [:]
 
     /// Called if the listener dies after it started, with why.
     public var onFailure: (@Sendable (String) -> Void)?
@@ -166,6 +169,36 @@ public final class NameProxy: @unchecked Sendable {
         lsofOutput.split(whereSeparator: \.isNewline).first { $0.hasPrefix("c") }.map { String($0.dropFirst()) }
     }
 
+    /// Where a request went, for the log.
+    static func describe(_ route: NameRoute) -> String {
+        switch route {
+        case .forward(let forward, let port): return "passing to localhost:\(port) on \(forward.host)"
+        case .page(.down(let forward)): return "\(forward.status), port \(forward.remote) on \(forward.host)"
+        case .page(.unreachable(let forward)): return "unreachable, port \(forward.remote) on \(forward.host)"
+        case .page(.several(_, let found)): return "on \(found.count) hosts"
+        case .page(.unknown): return "nothing has this name"
+        }
+    }
+
+    /// Text from a request, made safe for one line of the log.
+    static func clean(_ text: String) -> String {
+        String(text.filter { character in
+            !character.unicodeScalars.contains { $0.properties.generalCategory == .control }
+        }.prefix(100))
+    }
+
+    /// Logs where `host` went, if that's changed since last time.
+    private func note(_ route: NameRoute, for host: String) {
+        let host = Self.clean(host)
+        let description = Self.describe(route)
+        queue.async {
+            guard self.logged[host] != description else { return }
+            if self.logged.count > 200 { self.logged = [:] }
+            self.logged[host] = description
+            self.log.write("names: \(host): \(description)")
+        }
+    }
+
     public static func holder(ofPort port: UInt16) async -> String? {
         holder(lsofOutput: await Shell.run("/usr/sbin/lsof", ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fc"], timeout: 5).stdout)
     }
@@ -231,20 +264,20 @@ public final class NameProxy: @unchecked Sendable {
         let route = await handler.route(host)
         if head.method == "POST", let action = NameAction(path: head.path) {
             guard HTTPHead.isSameOrigin(origin: head.origin, host: host) else {
-                log.write("names: refused \(action) for \(host) from \(head.origin ?? "no origin")")
+                log.write("names: refused \(action) for \(Self.clean(host)) from \(Self.clean(head.origin ?? "no origin"))")
                 reply(connection, 403, "Forbidden", "")
                 return
             }
-            log.write("names: \(action) clicked on \(host)")
+            log.write("names: \(action) clicked on \(Self.clean(host))")
             await handler.perform(action, route)
             reply(connection, 303, "See Other", "", headers: "Location: /\r\n")
             return
         }
+        note(route, for: host)
         switch route {
         case .forward(let forward, let port):
             queue.async { self.pass(buffer, of: connection, to: forward, port: port) }
         case .page(let page):
-            if case .unknown = page { log.write("names: nothing is named \(host.prefix(100))") }
             send(page, on: connection)
         }
     }

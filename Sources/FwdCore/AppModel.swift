@@ -371,6 +371,17 @@ public final class AppModel: ObservableObject {
         if turnedOn { await sessions[host]?.connect() }
     }
 
+    /// Turns an entry on, whatever it is now. For requests that can arrive
+    /// twice, where a toggle would turn it back off.
+    public func turnOn(host: String, text: String) async throws {
+        await syncFromDisk()
+        var entries = file.hosts[host] ?? []
+        guard let index = entries.firstIndex(where: { $0.port == text }), !entries[index].on else { return }
+        entries[index].on = true
+        try await update(host: host, entries: entries)
+        await sessions[host]?.connect()
+    }
+
     /// Marks an entry keep connected, or not.
     public func setKeep(host: String, text: String, keep: Bool) async throws {
         await syncFromDisk()
@@ -600,7 +611,7 @@ public final class AppModel: ObservableObject {
             await connect(host: forward.host)
         case (.turnOn, .off):
             do {
-                try await toggle(host: forward.host, text: forward.text)
+                try await turnOn(host: forward.host, text: forward.text)
             } catch {
                 log.write("names: couldn't turn \(forward.text) on: \(error)", host: forward.host)
             }

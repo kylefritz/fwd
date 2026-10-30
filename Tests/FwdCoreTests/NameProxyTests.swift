@@ -4,8 +4,15 @@ import Testing
 @testable import FwdCore
 
 /// Sends `request` to 127.0.0.1:port and returns everything until the server
-/// hangs up.
-func exchange(_ port: Int, _ request: String) -> String? {
+/// hangs up. On its own thread: the socket calls block, and on a small machine
+/// that would hold the concurrency threads the proxy needs to answer.
+func exchange(_ port: Int, _ request: String) async -> String? {
+    await withCheckedContinuation { done in
+        Thread.detachNewThread { done.resume(returning: blockingExchange(port, request)) }
+    }
+}
+
+private func blockingExchange(_ port: Int, _ request: String) -> String? {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     guard fd >= 0 else { return nil }
     defer { close(fd) }
@@ -110,10 +117,49 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
     }
 }
 
+@Suite struct NameLoggingTests {
+    private func logged(_ log: Log) -> String {
+        log.flush()
+        return (try? String(contentsOf: log.file, encoding: .utf8)) ?? ""
+    }
+
+    @Test func aRouteIsLoggedOnceUntilItChanges() async throws {
+        let recorder = Recorder(route: .page(.down(address(.notConnected))))
+        let log = logFile()
+        let port = try freePort()
+        let proxy = NameProxy(port: UInt16(port), log: log, handler: recorder.handler())
+        try await proxy.start()
+        defer { proxy.stop() }
+
+        _ = await exchange(port, get("web.localhost"))
+        _ = await exchange(port, get("web.localhost"))
+        recorder.route = .page(.down(address(.connecting)))
+        _ = await exchange(port, get("web.localhost"))
+
+        try await eventually("both routes logged") {
+            logged(log).contains("connecting")
+        }
+        let lines = logged(log).split(whereSeparator: \.isNewline).filter { $0.contains("names: web.localhost") }
+        #expect(lines.count == 2, "a page reloading itself shouldn't fill the log")
+        #expect(lines[0].contains("notConnected"))
+        #expect(lines[0].contains("devbox"))
+    }
+
+    @Test func thePortAForwardGoesToIsLogged() {
+        let route = NameRoute.forward(address(.ready(local: 3107)), port: 3107)
+        #expect(NameProxy.describe(route) == "passing to localhost:3107 on devbox")
+    }
+
+    @Test func whatABrowserSentCannotFakeALogLine() {
+        #expect(NameProxy.clean("web\n2026 fwd started\r") == "web2026 fwd started")
+        #expect(NameProxy.clean(String(repeating: "a", count: 500)).count == 100)
+    }
+}
+
 @MainActor
 @Suite struct AppModelNamesTests {
     private func request(_ port: Int, _ text: String) async -> String? {
-        await Task.detached { exchange(port, text) }.value
+        await exchange(port, text)
     }
 
     @Test func turningOnServesNamesAndSticks() async throws {
@@ -201,6 +247,21 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         try await eventually("connected") { rig.box.made["devbox"]?.isEmpty == false }
     }
 
+    @Test func turnOnTwiceStaysOn() async throws {
+        let rig = try AppModelTests.Rig()
+        await rig.model.start(runTimer: false)
+        try await rig.model.add(host: "devbox", text: "3000 web")
+        try await rig.model.toggle(host: "devbox", text: "3000")
+
+        async let first: Void = rig.model.turnOn(host: "devbox", text: "3000")
+        async let second: Void = rig.model.turnOn(host: "devbox", text: "3000")
+        _ = try await (first, second)
+        #expect(rig.pill("devbox", "3000")?.on == true)
+
+        try await rig.model.turnOn(host: "devbox", text: "3000")
+        #expect(rig.pill("devbox", "3000")?.on == true)
+    }
+
     @Test func turnOnFromThePageTurnsTheEntryOn() async throws {
         let port = try freePort()
         let rig = try AppModelTests.Rig(namesPort: port)
@@ -227,7 +288,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         try await proxy.start()
         defer { proxy.stop() }
 
-        let answer = exchange(port, get("web.localhost"))
+        let answer = await exchange(port, get("web.localhost"))
         #expect(answer == "from the app")
     }
 
@@ -238,7 +299,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         try await proxy.start()
         defer { proxy.stop() }
 
-        let answer = try #require(exchange(port, get("web.localhost")))
+        let answer = try #require(await exchange(port, get("web.localhost")))
         #expect(answer.hasPrefix("HTTP/1.1 503"))
         #expect(answer.contains("web isn&#39;t connected"))
     }
@@ -250,7 +311,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         try await proxy.start()
         defer { proxy.stop() }
 
-        let answer = try #require(exchange(port, get("nope.localhost")))
+        let answer = try #require(await exchange(port, get("nope.localhost")))
         #expect(answer.hasPrefix("HTTP/1.1 404"))
     }
 
@@ -262,7 +323,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         try await proxy.start()
         defer { proxy.stop() }
 
-        let answer = try #require(exchange(port, get("web.localhost")))
+        let answer = try #require(await exchange(port, get("web.localhost")))
         #expect(answer.hasPrefix("HTTP/1.1 502"))
     }
 
@@ -274,7 +335,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         defer { proxy.stop() }
 
         let host = "web.localhost:\(port)"
-        let answer = try #require(exchange(port, post(host, path: "/__fwd/connect", origin: "http://\(host)")))
+        let answer = try #require(await exchange(port, post(host, path: "/__fwd/connect", origin: "http://\(host)")))
         #expect(answer.hasPrefix("HTTP/1.1 303"))
         #expect(answer.contains("Location: /"))
         #expect(recorder.actions == [.connect])
@@ -288,7 +349,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         defer { proxy.stop() }
 
         let host = "web.localhost:\(port)"
-        _ = exchange(port, post(host, path: "/__fwd/on", origin: "http://\(host)"))
+        _ = await exchange(port, post(host, path: "/__fwd/on", origin: "http://\(host)"))
         #expect(recorder.actions == [.turnOn])
     }
 
@@ -301,7 +362,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
 
         let host = "web.localhost:\(port)"
         for origin in ["https://evil.example", "http://other.localhost", "null", nil] as [String?] {
-            let answer = try #require(exchange(port, post(host, path: "/__fwd/connect", origin: origin)))
+            let answer = try #require(await exchange(port, post(host, path: "/__fwd/connect", origin: origin)))
             #expect(answer.hasPrefix("HTTP/1.1 403"), "origin \(origin ?? "none")")
         }
         #expect(recorder.actions.isEmpty)
@@ -315,7 +376,7 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         defer { proxy.stop() }
 
         let host = "web.localhost:\(port)"
-        _ = exchange(port, get(host, path: "/__fwd/connect"))
+        _ = await exchange(port, get(host, path: "/__fwd/connect"))
         #expect(recorder.actions.isEmpty)
     }
 

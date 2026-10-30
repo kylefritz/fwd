@@ -50,9 +50,7 @@ import Testing
             model.addressBook.addresses.first?.status == .ready(local: laptop)
         }
 
-        let answer = await Task.detached {
-            exchange(names, "GET / HTTP/1.1\r\nHost: web.localhost\r\n\r\n")
-        }.value
+        let answer = await exchange(names, "GET / HTTP/1.1\r\nHost: web.localhost\r\n\r\n")
         #expect(answer == "from the remote")
         await model.shutdown()
     }

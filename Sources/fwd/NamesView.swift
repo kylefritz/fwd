@@ -24,6 +24,11 @@ struct NamesContent: View {
     var open: (URL) -> Void = { _ in }
     var close: () -> Void = {}
 
+    /// Natural height of the list, measured so it's only as tall as it needs
+    /// to be, up to `listCap`. A ScrollView has no height of its own.
+    @State private var listHeight: CGFloat = 0
+    private let listCap: CGFloat = 280
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             switch state {
@@ -104,9 +109,14 @@ struct NamesContent: View {
             Text("No named forwards yet. Add one like 3000 web, or rename one in the panel.")
                 .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } else {
-            VStack(spacing: 0) {
-                ForEach(addresses) { row($0, showingStatus: showingStatus) }
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(addresses) { row($0, showingStatus: showingStatus) }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
             }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(max(listHeight, 32), listCap))
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         }
     }
@@ -160,6 +170,11 @@ struct NamesSnapshot: View {
         ForwardAddress(address: "web.localhost", name: "my web", host: "devbox", text: "9000", remote: 9000, status: .off,
                        duplicate: true),
     ]
+    /// More addresses than fit, which scroll.
+    private static let long = (1...30).map {
+        ForwardAddress(address: "app-\($0).localhost", name: "app-\($0)", host: "devbox", text: "\(3000 + $0)",
+                       remote: 3000 + $0, status: .ready(local: 3000 + $0))
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -171,6 +186,7 @@ struct NamesSnapshot: View {
                 frame(.on, saved: true, Self.more)
                 frame(.failed("Port 80 is in use by nginx, so fwd can't listen there."), saved: true, Self.addresses)
             }
+            frame(.on, saved: true, Self.long)
         }
         .padding(16)
     }
