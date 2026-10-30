@@ -196,8 +196,11 @@ using, and never opens a sign-in page behind your back.
   and 30 seconds, then once a minute.
 - Asleep or offline, fwd does nothing at all, and picks up again when the Mac
   wakes or the network returns.
+- When a sign-in proxy like cloudflared opens a browser, fwd waits up to three
+  minutes for you to sign in and then connects by itself.
 - When ssh needs a person (key not loaded, unknown host key, a browser
-  sign-in), fwd stops and shows **Retry** and **Open in Terminal**.
+  sign-in left unfinished), fwd stops and shows **Retry** and **Open in
+  Terminal**.
 
 ## Configuration
 
