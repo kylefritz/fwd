@@ -36,6 +36,27 @@ import Testing
         #expect(PortAllocator.systemIsFree(laptop))
     }
 
+    @Test func anAddressReachesTheRemoteThroughSSH() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let remote = try TestListener(greeting: "from the remote")
+        let laptop = try freePort()
+        let names = try freePort()
+        let model = AppModel(paths: server.paths, power: FakePower(), timing: fast, namesPort: UInt16(names))
+        await model.start(runTimer: false)
+        await model.setOpenByName(true)
+        try await model.add(host: SSHTestServer.goodHost, text: "\(remote.port) -> \(laptop) web")
+        try await eventually("the address is up") {
+            model.addressBook.addresses.first?.status == .ready(local: laptop)
+        }
+
+        let answer = await Task.detached {
+            exchange(names, "GET / HTTP/1.1\r\nHost: web.localhost\r\n\r\n")
+        }.value
+        #expect(answer == "from the remote")
+        await model.shutdown()
+    }
+
     @Test func theConfigsOwnForwardsAreNeverOpened() async throws {
         let server = try SSHTestServer()
         defer { server.cleanup() }
