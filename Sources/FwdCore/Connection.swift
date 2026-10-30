@@ -141,6 +141,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         guard socketPath.utf8.count < 100 else {
             throw ConnectionError.failed("Control socket path is too long: \(socketPath)")
         }
+        lock.withLock { stopping = false }
 
         // ssh's ConnectTimeout also bounds the wait for the server's banner,
         // which a sign-in proxy holds back until you've signed in. Give a
@@ -185,11 +186,18 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             }
         }
 
-        lock.withLock {
+        // stop() may have come in while the proxy check ran, before there
+        // was a process for it to stop.
+        let stopped = lock.withLock { () -> Bool in
+            if stopping { return true }
             self.process = process
             stderrLines = []
             ready = false
-            stopping = false
+            return false
+        }
+        if stopped {
+            log.write("stopped before ssh started", host: host)
+            throw ConnectionError.failed("Stopped")
         }
 
         do {
@@ -244,9 +252,19 @@ public final class SSHConnection: Connection, @unchecked Sendable {
 
     /// Whether the host's ssh config sends it through a ProxyCommand, which
     /// is where sign-in proxies like cloudflared live.
+    /// Logs only the answer, never the command itself, which may hold a token.
     private func usesProxyCommand() async -> Bool {
         let result = await Shell.run(Self.sshPath, base + ["-G", "--", host], timeout: 5)
-        return result.stdout.split(whereSeparator: \.isNewline).contains { $0.hasPrefix("proxycommand ") }
+        guard result.ok else {
+            let why = result.status == -1 ? "timed out" : Self.lastLine(result.stderr.isEmpty ? "exit \(result.status)" : result.stderr)
+            log.write("couldn't read the ssh config (\(why)); connecting without waiting for a sign-in", host: host)
+            return false
+        }
+        let proxied = result.stdout.split(whereSeparator: \.isNewline).contains { $0.hasPrefix("proxycommand ") }
+        if proxied {
+            log.write("goes through a ProxyCommand; ssh may wait \(Int(signInTimeout))s for a sign-in", host: host)
+        }
+        return proxied
     }
 
     /// A sign-in proxy has opened a browser and is waiting for you.
