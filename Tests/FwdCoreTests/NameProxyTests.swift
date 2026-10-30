@@ -176,7 +176,10 @@ private func address(_ status: ForwardAddress.Status) -> ForwardAddress {
         await rig.model.setOpenByName(false)
         #expect(rig.model.namesState == .off)
         #expect(!rig.model.store.loadOpenByName())
-        #expect(await request(port, "GET / HTTP/1.1\r\nHost: nope.localhost\r\n\r\n") == nil)
+        // Cancelling a listener finishes a moment after it returns.
+        try await eventually("the port to close") {
+            await request(port, "GET / HTTP/1.1\r\nHost: nope.localhost\r\n\r\n") == nil
+        }
     }
 
     @Test func aSavedSettingStartsAtLaunch() async throws {
