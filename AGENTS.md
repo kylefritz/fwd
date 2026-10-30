@@ -18,6 +18,24 @@ Log enough to answer "why did it show that?" from the log alone. Never log
 secrets. The log is `~/Library/Logs/fwd/fwd.log` (`$FWD_HOME/logs/fwd.log`
 when `FWD_HOME` is set), and it's what the Report a Bug window attaches.
 
+## Releases and version numbers
+
+Every green push to `main` publishes a beta, `v<next patch>-beta.<run>`,
+counting up from the last release tag. A release is a tag `vX.Y.Z` pushed on
+a commit whose CI passed; `release.yml` publishes it and updates the Homebrew
+tap.
+
+Pick the number by what changed since the last release (`git log
+<last tag>..main`). While fwd is below 1.0:
+
+- a new feature or a change in behavior bumps the minor: 0.2.1 → 0.3.0;
+- only fixes bump the patch: 0.3.0 → 0.3.1.
+
+The beta number is just a guess at the next patch, so don't copy it. Say
+which number you'd use and why, and ask before pushing the tag. Once the
+release run starts, cancelling it may not stop it publishing, so a wrong
+number usually means releasing again rather than taking it back.
+
 ## Check pull requests for bot reviews
 
 Bots review pull requests here: GitHub Copilot, and Codex (the
