@@ -134,6 +134,9 @@ private struct StateFile: Codable {
     /// A random ID for this install, sent with update checks to count
     /// installs. Not derived from anything about the machine or the user.
     var install_id: String?
+    /// Open Forwards by Name is on. Here rather than in config.yaml, which is
+    /// the user's and which fwd never writes to.
+    var open_by_name: Bool?
 }
 
 /// Reads and writes the YAML files under `~/.config/fwd`.
@@ -211,6 +214,14 @@ public final class Store {
         state.install_id = id
         saveState(state)
         return id
+    }
+
+    public func loadOpenByName() -> Bool { loadState().open_by_name ?? false }
+
+    public func saveOpenByName(_ on: Bool) {
+        var state = loadState()
+        state.open_by_name = on
+        saveState(state)
     }
 
     // MARK: config.yaml

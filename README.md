@@ -123,6 +123,36 @@ open it in your browser, and right-click for **Keep connected**, **Rename…**,
 | ⚠️ orange triangle | blocked; hover for the reason |
 | ↳ orange bent arrow | your laptop port was taken, so it moved to the one shown |
 
+### Opening forwards by name
+
+Choose **Open Forwards by Name…** in the ••• menu and click **Turn On**. A
+forward named `web` then opens at `http://web.localhost`, with no port number.
+It works in any browser that resolves `.localhost` names, and there's no
+password and nothing to install.
+
+fwd does this by listening on port 80 and passing each connection to the
+forward it names. It refuses connections from other computers. macOS only lets
+an app without root listen on port 80 on every network interface, so fwd
+checks each connection and closes any that doesn't come from your Mac. **Turn
+Off** in the same window stops it. While fwd isn't running, these addresses
+show a browser error.
+
+| Forward | `name.localhost` shows |
+|---|---|
+| Up | your app |
+| Off | a page with **Turn On** |
+| On, host not connected | a page with **Connect** |
+| Connected, nothing listening | a page that reloads when your app comes up |
+| Name on two hosts | a list of links; each is `name.host.localhost` |
+
+Only a click connects a host: loading the address never does, and other
+websites can't press those buttons for you. Only named forwards on a single
+port get an address, so ranges and Screen Sharing don't. `https://` doesn't
+work.
+
+If two forwards on a host end up with the same address, like `my api` and
+`my-api`, the lower port keeps it and the window asks you to rename the other.
+
 ### Screen Sharing
 
 Click the display icon on a host card. fwd forwards the remote's port 5900 to
@@ -265,6 +295,14 @@ The remote has none of `ss`, `netstat` or `lsof`. Single ports still work.
 
 Something on your Mac already had that port. Turn the entry off and on to try
 the original port again.
+
+</details>
+
+<details>
+<summary><b>Open Forwards by Name says port 80 is in use</b></summary>
+
+Another web server on your Mac has it. Stop that server, then click **Try
+Again**. Until then `web.localhost:8765` still works with the port number.
 
 </details>
 

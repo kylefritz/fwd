@@ -54,6 +54,10 @@ struct PanelView: View {
             Banner(symbol: "exclamationmark.triangle.fill", tint: .orange,
                    title: "ssh can't read your config", detail: configError)
         }
+        if case .failed(let problem) = model.namesState, model.openByNameSaved {
+            Banner(symbol: "exclamationmark.triangle.fill", tint: .orange,
+                   title: "Forwards by name are off", detail: "\(problem)\nOpen Forwards by Name in the ••• menu to try again.")
+        }
         if let actionError {
             Banner(symbol: "xmark.octagon.fill", tint: .red, title: actionError, detail: nil) {
                 self.actionError = nil
@@ -373,6 +377,7 @@ struct FooterView: View {
                         }
                         .disabled(commandInstalled)
                     }
+                    Button("Open Forwards by Name…") { app.showNames() }
                     Divider()
                     if !inWindow {
                         Button("Pop Out into a Window") { app.showWindow() }

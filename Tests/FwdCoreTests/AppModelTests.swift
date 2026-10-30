@@ -8,7 +8,7 @@ import Testing
         let paths = tempPaths()
         let model: AppModel
 
-        init(sshConfig: String = "Host devbox\nHost homelab\nHost staging\n") throws {
+        init(sshConfig: String = "Host devbox\nHost homelab\nHost staging\n", namesPort: Int = 0) throws {
             var paths = self.paths
             let config = paths.configDir.deletingLastPathComponent().appendingPathComponent("ssh_config")
             try FileManager.default.createDirectory(at: config.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -28,7 +28,8 @@ import Testing
                              // These tests are about the model, not this machine's ports or ssh sessions.
                              isPortFree: { _ in true },
                              userSessions: { box.sessions },
-                             busyPorts: { _ in box.busy })
+                             busyPorts: { _ in box.busy },
+                             namesPort: UInt16(namesPort))
             self.box = box
         }
 
