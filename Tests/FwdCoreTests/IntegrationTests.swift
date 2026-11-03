@@ -328,7 +328,7 @@ import Testing
         let laptop = try freePort()
         let model = AppModel(paths: server.paths, power: FakePower(),
                              timing: Timing(retrySchedule: [0.3], steadyRetry: 0.5, scanInterval: 0.3, settle: 0.05),
-                             userSessions: { [] })
+                             userSessions: { UserSessions.Found() })
         await model.start(runTimer: false)
         let handler = ControlHandler(model: model, open: { _ in })
         try SSHConnection.prepareSocketDir(server.paths.socketDir)

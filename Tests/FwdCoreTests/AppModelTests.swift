@@ -27,7 +27,7 @@ import Testing
                              },
                              // These tests are about the model, not this machine's ports or ssh sessions.
                              isPortFree: { _ in true },
-                             userSessions: { box.sessions },
+                             userSessions: { UserSessions.Found(sessions: box.sessions) },
                              busyPorts: { _ in box.busy })
             self.box = box
         }

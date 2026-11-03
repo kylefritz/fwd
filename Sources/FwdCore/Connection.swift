@@ -26,6 +26,12 @@ public protocol Connection: AnyObject {
     func addForward(local: Int, remote: Int) async throws
     func cancelForward(local: Int, remote: Int) async throws
     func run(_ command: String) async throws -> String
+    /// `start()` is waiting for you to sign in in a browser it opened.
+    var waitingForSignIn: Bool { get }
+}
+
+public extension Connection {
+    var waitingForSignIn: Bool { false }
 }
 
 /// `Connection` built on the system ssh client and a ControlMaster socket.
@@ -46,6 +52,9 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     private var stderrLines: [String] = []
     private var ready = false
     private var stopping = false
+    private var signInPending = false
+
+    public var waitingForSignIn: Bool { lock.withLock { signInPending } }
 
     public init(host: String, paths: Paths, log: Log, connectTimeout: Int = 8, signInTimeout: TimeInterval = 180) {
         self.host = host
@@ -208,11 +217,13 @@ public final class SSHConnection: Connection, @unchecked Sendable {
 
         var deadline = Date().addingTimeInterval(TimeInterval(connectTimeout) + 6)
         var signingIn = false
+        defer { lock.withLock { signInPending = false } }
         while Date() < deadline {
             // The ssh that opened the browser connects by itself once you've
             // signed in, so wait for you instead of killing it.
             if !signingIn, Self.asksForBrowserSignIn(collectedStderr()) {
                 signingIn = true
+                lock.withLock { signInPending = true }
                 deadline = max(deadline, Date().addingTimeInterval(signInTimeout))
                 log.write("waiting up to \(Int(signInTimeout))s for you to sign in in the browser", host: host)
             }
@@ -324,6 +335,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         let process = lock.withLock { () -> Process? in
             stopping = true
             ready = false
+            signInPending = false
             return self.process
         }
         guard let process else { return }

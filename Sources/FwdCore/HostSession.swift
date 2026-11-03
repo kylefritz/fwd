@@ -106,6 +106,8 @@ public final class HostSession {
     /// Some valid entry is on, so a connection could be wanted.
     public var hasEnabledEntries: Bool { !patterns.isEmpty }
 
+    static let signInNeeded = "This host wants you to sign in in a browser. Click Retry to sign in."
+
     public static func stickyKey(host: String, entry: String, remote: Int) -> String {
         "\(host)|\(entry)|\(remote)"
     }
@@ -166,8 +168,16 @@ public final class HostSession {
             }
         } else if !wantsConnection {
             if running {
+                let wasSigningIn = connection?.waitingForSignIn == true
                 log.write("nothing asks for a connection now; disconnecting", host: host)
                 await halt()
+                if wasSigningIn {
+                    // Connecting again by itself would open another sign-in
+                    // tab, so wait for a click.
+                    log.write("stopped while waiting for a browser sign-in; "
+                              + "won't start another until you click Retry", host: host)
+                    return set(.needsAttention(Self.signInNeeded))
+                }
             }
             if case .needsAttention = state { return changed() }
             set(.standby)
@@ -230,6 +240,12 @@ public final class HostSession {
             return
         }
         if state == .connected, let connection, await connection.isAlive() { return }
+        // Starting over would kill the ssh that opened the browser and open
+        // another tab; it connects by itself once you sign in.
+        if state == .connecting, connection?.waitingForSignIn == true {
+            log.write("network changed while waiting for a sign-in; still waiting", host: host)
+            return
+        }
         log.write("resuming", host: host)
         await halt()
         start(after: timing.settle)
