@@ -55,6 +55,38 @@ import Testing
         #expect(UserSessions.hosts([master, hop, yours, yourHop, yourProxyCommand], socketDir: socketDir) == ["devbox"])
     }
 
+    @Test func aNewProxiedSshIsSettlingNotASession() {
+        let young = UserSessions.Process(pid: 70, ppid: 1, arguments: ["ssh", "mbar"], age: 8)
+        let proxy = UserSessions.Process(pid: 71, ppid: 70, arguments: ["cloudflared"], age: 8)
+        let found = UserSessions.find([young, proxy], socketDir: socketDir)
+        #expect(found.sessions.isEmpty)
+        #expect(found.settling == ["mbar"])
+
+        let settled = UserSessions.Process(pid: 70, ppid: 1, arguments: ["ssh", "mbar"], age: 25)
+        #expect(UserSessions.find([settled, proxy], socketDir: socketDir) == .init(sessions: ["mbar"]))
+    }
+
+    @Test func aNewPlainSshCountsRightAway() {
+        let p = UserSessions.Process(pid: 70, ppid: 1, arguments: ["ssh", "devbox"], age: 1)
+        #expect(UserSessions.hosts([p], socketDir: socketDir) == ["devbox"])
+    }
+
+    @Test func anOlderSessionToTheSameHostWins() {
+        let old = UserSessions.Process(pid: 70, ppid: 1, arguments: ["ssh", "mbar"], age: 600)
+        let oldProxy = UserSessions.Process(pid: 71, ppid: 70, arguments: ["cloudflared"])
+        let new = UserSessions.Process(pid: 80, ppid: 1, arguments: ["ssh", "mbar"], age: 2)
+        let newProxy = UserSessions.Process(pid: 81, ppid: 80, arguments: ["cloudflared"])
+        #expect(UserSessions.find([old, oldProxy, new, newProxy], socketDir: socketDir) == .init(sessions: ["mbar"]))
+    }
+
+    @Test func parsesPsElapsedTime() {
+        #expect(UserSessions.elapsed("00:09") == 9)
+        #expect(UserSessions.elapsed("12:34") == 754)
+        #expect(UserSessions.elapsed("01:02:03") == 3723)
+        #expect(UserSessions.elapsed("2-01:02:03") == 176_523, "2 days, 1h 2m 3s")
+        #expect(UserSessions.elapsed("soon") == nil)
+    }
+
     @Test func readsARealProcessesArguments() throws {
         let p = Foundation.Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sleep")

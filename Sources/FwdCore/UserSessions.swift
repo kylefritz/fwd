@@ -10,37 +10,87 @@ public enum UserSessions {
         let pid: Int32
         let ppid: Int32
         let arguments: [String]
+        /// Seconds since the process started.
+        var age: TimeInterval = .infinity
     }
 
-    /// Host names, lowercased: ssh matches them case-insensitively.
-    public static func current(paths: Paths) async -> Set<String> {
+    /// An ssh that goes through a proxy counts as a session only once it has
+    /// lasted this long. A sign-in proxy like cloudflared holds an ssh
+    /// that hasn't signed in for about 10s before it gives up, and something
+    /// that retries ssh (a terminal, an editor) can do that over and over.
+    /// Counting those would have fwd connect too and open sign-in tabs.
+    public static let proxiedSettle: TimeInterval = 20
+
+    public struct Found: Equatable, Sendable {
+        /// Hosts with a session, lowercased: ssh matches them case-insensitively.
+        public var sessions: Set<String>
+        /// Hosts whose only session goes through a proxy and is too new to count yet.
+        public var settling: Set<String>
+
+        public init(sessions: Set<String> = [], settling: Set<String> = []) {
+            self.sessions = sessions
+            self.settling = settling
+        }
+    }
+
+    public static func current(paths: Paths) async -> Found {
         // Only your own processes; `comm` is the executable, so this is cheap.
-        let result = await Shell.run("/bin/ps", ["-x", "-U", String(getuid()), "-o", "pid=,ppid=,comm="], timeout: 5)
-        guard result.ok else { return [] }
+        let result = await Shell.run(
+            "/bin/ps", ["-x", "-U", String(getuid()), "-o", "pid=,ppid=,etime=,comm="], timeout: 5)
+        guard result.ok else { return Found() }
         var processes: [Process] = []
         for line in result.stdout.split(whereSeparator: \.isNewline) {
-            let fields = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
-            guard fields.count == 3, let pid = Int32(fields[0]), let ppid = Int32(fields[1]) else { continue }
+            let fields = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
+            guard fields.count == 4, let pid = Int32(fields[0]), let ppid = Int32(fields[1]) else { continue }
             // Every process's parent is needed to spot proxy hops, but only
             // ssh processes need their arguments read.
-            let isSSH = isSSHProgram(String(fields[2]))
-            let arguments = isSSH ? (Self.arguments(pid: pid) ?? []) : [String(fields[2])]
-            processes.append(Process(pid: pid, ppid: ppid, arguments: arguments))
+            let isSSH = isSSHProgram(String(fields[3]))
+            let arguments = isSSH ? (Self.arguments(pid: pid) ?? []) : [String(fields[3])]
+            processes.append(Process(pid: pid, ppid: ppid, arguments: arguments,
+                                     age: elapsed(String(fields[2])) ?? .infinity))
         }
-        return hosts(processes, socketDir: paths.socketDir.path)
+        return find(processes, socketDir: paths.socketDir.path)
     }
 
     static func hosts(_ processes: [Process], socketDir: String) -> Set<String> {
+        find(processes, socketDir: socketDir).sessions
+    }
+
+    static func find(_ processes: [Process], socketDir: String) -> Found {
         let sshPIDs = Set(processes.filter { $0.arguments.first.map(isSSHProgram) == true }.map(\.pid))
-        var found = Set<String>()
+        // A child of an ssh is its ProxyCommand (cloudflared, nc) or a
+        // ProxyJump hop; a plain session has none.
+        let parents = Set(processes.map(\.ppid))
+        var found = Found()
         for process in processes where sshPIDs.contains(process.pid) {
             // An ssh started by an ssh is a ProxyCommand or ProxyJump hop.
             if sshPIDs.contains(process.ppid) { continue }
             // fwd's own masters and control commands use its socket directory.
             if process.arguments.contains(where: { $0.contains(socketDir) }) { continue }
-            if let host = destination(Array(process.arguments.dropFirst())) { found.insert(host.lowercased()) }
+            guard let host = destination(Array(process.arguments.dropFirst()))?.lowercased() else { continue }
+            if parents.contains(process.pid), process.age < proxiedSettle {
+                found.settling.insert(host)
+            } else {
+                found.sessions.insert(host)
+            }
         }
+        found.settling.subtract(found.sessions)
         return found
+    }
+
+    /// `ps`'s elapsed time, `[[dd-]hh:]mm:ss`, in seconds.
+    static func elapsed(_ text: String) -> TimeInterval? {
+        var days = 0.0
+        var rest = Substring(text)
+        if let dash = rest.firstIndex(of: "-") {
+            guard let d = Double(rest[..<dash]) else { return nil }
+            days = d
+            rest = rest[rest.index(after: dash)...]
+        }
+        let parts = rest.split(separator: ":").map { Double($0) }
+        guard (2...3).contains(parts.count), !parts.contains(nil) else { return nil }
+        let seconds = parts.reduce(0.0) { $0 * 60 + $1! }
+        return days * 86_400 + seconds
     }
 
     private static func isSSHProgram(_ path: String) -> Bool { path == "ssh" || path.hasSuffix("/ssh") }

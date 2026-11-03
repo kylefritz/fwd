@@ -110,11 +110,13 @@ public final class AppModel: ObservableObject {
     private let timing: Timing
     private let makeConnection: (String) -> Connection
     private let cleansLeftovers: Bool
-    private let userSessions: () async -> Set<String>
+    private let userSessions: () async -> UserSessions.Found
     private let busyPorts: (Int32) async -> Set<Int>
 
     /// Hosts you have your own ssh session to, from the last look.
     private var openSessions: Set<String> = []
+    /// Hosts whose proxied session is too new to count, from the last look.
+    private var settlingSessions: Set<String> = []
     private var lookingForSessions = false
 
     struct ScreenSharingUse {
@@ -145,7 +147,7 @@ public final class AppModel: ObservableObject {
     public init(paths: Paths = .fromEnvironment(), power: PowerEvents, timing: Timing = Timing(),
                 log: Log? = nil, makeConnection: ((String) -> Connection)? = nil,
                 isPortFree: @escaping (Int) -> Bool = PortAllocator.systemIsFree,
-                userSessions: (() async -> Set<String>)? = nil,
+                userSessions: (() async -> UserSessions.Found)? = nil,
                 busyPorts: @escaping (Int32) async -> Set<Int> = TrafficSampler.busyPorts) {
         self.paths = paths
         self.userSessions = userSessions ?? { await UserSessions.current(paths: paths) }
@@ -175,7 +177,7 @@ public final class AppModel: ObservableObject {
             Task { @MainActor in await self?.handle(event) }
         }
         reloadSSHConfig()
-        openSessions = await userSessions()
+        openSessions = await userSessions().sessions
         await reloadPorts(initial: true)
         if runTimer {
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -224,11 +226,23 @@ public final class AppModel: ObservableObject {
         guard sessions.values.contains(where: \.hasEnabledEntries) else {
             // Not looked at, so not trusted when a port is turned on later.
             openSessions = []
+            settlingSessions = []
             return
         }
         lookingForSessions = true
         defer { lookingForSessions = false }
-        openSessions = await userSessions()
+        let found = await userSessions()
+        openSessions = found.sessions
+        // Said once per new ssh, so a retrying one shows up in the log without
+        // a line every two seconds.
+        for (host, session) in sessions where session.hasEnabledEntries {
+            let key = host.lowercased()
+            if found.settling.contains(key), !settlingSessions.contains(key) {
+                log.write("an ssh session goes through a proxy and just started; "
+                          + "counting it once it has lasted \(Int(UserSessions.proxiedSettle))s", host: host)
+            }
+        }
+        settlingSessions = found.settling
         for (host, session) in sessions { await session.setUserSession(hasUserSession(host)) }
     }
 

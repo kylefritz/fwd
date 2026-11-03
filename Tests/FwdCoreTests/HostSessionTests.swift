@@ -76,6 +76,42 @@ import Testing
         #expect(factory.made[1].stopCount == 1)
     }
 
+    @Test func aSessionThatEndsDuringASignInWaitsForAClick() async throws {
+        // The bug in #18: something kept retrying ssh, and each try made fwd
+        // connect too, opening another sign-in tab every time.
+        let factory = Factory()
+        factory.configure = { $0.waitsForSignIn = true }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000")])
+        await s.setUserSession(true)
+        try await eventually("signing in") { factory.made.first?.waitingForSignIn == true }
+        await s.setUserSession(false)
+        #expect(s.state == .needsAttention(HostSession.signInNeeded))
+
+        await s.setUserSession(true)
+        await s.handle(.networkUp)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "no second sign-in until you click")
+
+        factory.configure = { _ in }
+        await s.connect()
+        try await eventually("a click signs in") { s.state == .connected }
+    }
+
+    @Test func aNetworkChangeDoesNotRestartASignIn() async throws {
+        let factory = Factory()
+        factory.configure = { $0.waitsForSignIn = true }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000")])
+        await s.setUserSession(true)
+        try await eventually("signing in") { factory.made.first?.waitingForSignIn == true }
+        await s.handle(.networkUp)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "the ssh that opened the browser keeps waiting")
+        #expect(factory.made[0].stopCount == 0)
+        await s.shutdown()
+    }
+
     @Test func aClickedConnectionOutlivesYourSshSession() async throws {
         let factory = Factory()
         let s = session(factory)
