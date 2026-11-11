@@ -77,6 +77,9 @@ public final class ControlHandler {
     private func target(_ request: ControlRequest, needsPorts: Bool) throws -> ControlTarget {
         let target = try ControlTarget.resolve(request.args, hosts: cards.map(\.name),
                                                defaultHosts: connected, noun: "connected")
+        if card(target.host)?.off == true {
+            throw ControlError.failed("\(target.host) is turned off in fwd; turn it on under Hidden hosts in the panel")
+        }
         if needsPorts, target.ports.isEmpty {
             throw ControlError.usage("say which port, like: fwd \(target.host) 3000")
         }
@@ -221,9 +224,12 @@ public final class ControlHandler {
 
     private func connect(_ request: ControlRequest) async throws -> ControlReply {
         // Here the host left out is the one host waiting to connect.
-        let waiting = cards.filter { $0.state != .connected && $0.pills.contains(where: \.on) }.map(\.name)
+        let waiting = cards.filter { !$0.off && $0.state != .connected && $0.pills.contains(where: \.on) }.map(\.name)
         let target = try ControlTarget.resolve(request.args, hosts: cards.map(\.name),
                                                defaultHosts: waiting, noun: "waiting to connect")
+        if card(target.host)?.off == true {
+            throw ControlError.failed("\(target.host) is turned off in fwd; turn it on under Hidden hosts in the panel")
+        }
         guard card(target.host)?.pills.contains(where: \.on) == true else {
             throw ControlError.failed("\(target.host) has no ports on; forward one first, like: fwd \(target.host) 3000")
         }

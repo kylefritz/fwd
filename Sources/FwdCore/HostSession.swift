@@ -14,6 +14,8 @@ public enum HostState: Equatable, Sendable {
     case paused(String)
     /// ssh needs a person. Not retrying.
     case needsAttention(String)
+    /// You turned this host off. Nothing connects it until you turn it on.
+    case off
 }
 
 /// Intervals, in seconds. Tests shrink them.
@@ -87,6 +89,8 @@ public final class HostSession {
     /// When the ssh now trying to connect was started; nil when none is.
     private var attemptStarted: Date?
     private var saidLettingFinish = false
+    /// The host is turned off: no reason to connect counts.
+    private var off = false
 
     public init(host: String, makeConnection: @escaping () -> Connection, allocator: PortAllocator,
                 power: PowerEvents, timing: Timing = Timing(), log: Log) {
@@ -109,7 +113,7 @@ public final class HostSession {
     /// Reasons that survive a drop, so the session reconnects on its own.
     private var reconnects: Bool { keeps || userSession }
 
-    private var wantsConnection: Bool { !patterns.isEmpty && (reconnects || clicked) }
+    private var wantsConnection: Bool { !off && !patterns.isEmpty && (reconnects || clicked) }
 
     /// Some valid entry is on, so a connection could be wanted.
     public var hasEnabledEntries: Bool { !patterns.isEmpty }
@@ -155,6 +159,10 @@ public final class HostSession {
     /// browser tab (#21).
     public func connect(unattended: Bool = false) async {
         guard !patterns.isEmpty else { return }
+        if off {
+            log.write("asked to connect, but this host is turned off; not connecting", host: host)
+            return
+        }
         if unattended, case .needsAttention = state {
             log.write("the command line asked to connect, but this host is waiting for you; "
                       + "not retrying until you click Retry or run fwd connect", host: host)
@@ -180,10 +188,29 @@ public final class HostSession {
         if state == .connected { clicked = true }
     }
 
+    /// Turns the whole host off or back on. Off, it drops its connection and
+    /// ignores every reason to connect: your ssh sessions, kept ports,
+    /// clicks and the command line.
+    public func setOff(_ value: Bool) async {
+        guard value != off else { return }
+        off = value
+        log.write(value ? "turned off; won't connect for any reason until it's turned on"
+                        : "turned on", host: host)
+        await settle()
+    }
+
     /// Starts or stops the connection to match the entries and the reasons
     /// to be connected.
     private func settle() async {
-        if patterns.isEmpty {
+        if off {
+            clicked = false
+            if running || state != .off {
+                await halt()
+                set(.off)
+            } else {
+                changed()
+            }
+        } else if patterns.isEmpty {
             clicked = false
             if running || state != .idle {
                 await halt()
@@ -222,6 +249,12 @@ public final class HostSession {
     }
 
     public func handle(_ event: PowerEvent) async {
+        if off {
+            // Still knows whether the Mac is asleep, for when it's turned on.
+            if event == .willSleep { asleep = true }
+            if event == .didWake { asleep = false }
+            return
+        }
         switch event {
         case .willSleep:
             asleep = true
@@ -550,7 +583,7 @@ public final class HostSession {
         // A click connects once. Once the host is waiting or paused, it has
         // been used up, and must not start a connection later on its own.
         switch new {
-        case .standby, .paused: clicked = false
+        case .standby, .paused, .off: clicked = false
         default: break
         }
         state = new

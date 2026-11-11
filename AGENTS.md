@@ -71,6 +71,7 @@ The app can draw itself with no one at the screen. After `swift build`:
 | `--snapshot-commands out.png` | the Command Line Activity window, with made-up rows |
 | `--snapshot-herdr out.png` | the VS Code button's menu in each state, and a list long enough to scroll |
 | `--light` | any of these in light mode |
+| `--show-hidden` | the panel with its Hidden hosts list open |
 
 Run snapshots with `FWD_HOME` pointed at a scratch folder and
 `FWD_STATS_SERVER=` (empty), so they don't touch your own fwd or send pings.
