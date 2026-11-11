@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var window: NSWindow?
     private var reportWindow: NSWindow?
+    private var namesWindow: NSWindow?
     private var commandsWindow: NSWindow?
     private var visibleSurfaces = 0
     private var updateTimer: Timer?
@@ -164,6 +165,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-herdr"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]), AnyView(HerdrSnapshot()))
+        }
+        if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-names"), flag + 1 < CommandLine.arguments.count {
+            snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]), AnyView(NamesSnapshot()))
         }
     }
 
@@ -394,6 +398,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         w.isReleasedWhenClosed = false
         w.center()
         reportWindow = w
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
+    }
+
+    /// Opens the window for turning forwards by name on and off.
+    func showNames() {
+        namesWindow?.close()
+        let view = NamesView(model: model, open: { [weak self] in self?.open($0) },
+                             close: { [weak self] in self?.namesWindow?.close() })
+        let w = NSWindow(contentViewController: NSHostingController(rootView: view))
+        w.title = "Open Forwards by Name"
+        w.styleMask = [.titled, .closable]
+        w.isReleasedWhenClosed = false
+        w.center()
+        namesWindow = w
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
     }

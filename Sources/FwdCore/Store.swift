@@ -134,6 +134,9 @@ private struct StateFile: Codable {
     /// A random ID for this install, sent with update checks to count
     /// installs. Not derived from anything about the machine or the user.
     var install_id: String?
+    /// Open Forwards by Name is on. Here rather than in config.yaml, which is
+    /// the user's and which fwd never writes to.
+    var open_by_name: Bool?
     /// Hosts turned off in the panel. Left out when there are none.
     var off_hosts: [String]?
 
@@ -146,6 +149,7 @@ private struct StateFile: Codable {
         assigned = try c.decodeIfPresent([String: Int].self, forKey: .assigned) ?? [:]
         install_id = try c.decodeIfPresent(String.self, forKey: .install_id)
         off_hosts = try c.decodeIfPresent([String].self, forKey: .off_hosts)
+        open_by_name = try c.decodeIfPresent(Bool.self, forKey: .open_by_name)
     }
 }
 
@@ -234,6 +238,14 @@ public final class Store {
         state.install_id = id
         saveState(state)
         return id
+    }
+
+    public func loadOpenByName() -> Bool { loadState().open_by_name ?? false }
+
+    public func saveOpenByName(_ on: Bool) {
+        var state = loadState()
+        state.open_by_name = on
+        saveState(state)
     }
 
     // MARK: config.yaml

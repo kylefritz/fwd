@@ -70,6 +70,7 @@ The app can draw itself with no one at the screen. After `swift build`:
 | `--snapshot-report out.png` | the Report a Bug window |
 | `--snapshot-commands out.png` | the Command Line Activity window, with made-up rows |
 | `--snapshot-herdr out.png` | the VS Code button's menu in each state, and a list long enough to scroll |
+| `--snapshot-names out.png` | the Open Forwards by Name window in each state |
 | `--light` | any of these in light mode |
 | `--show-hidden` | the panel with its Hidden hosts list open |
 

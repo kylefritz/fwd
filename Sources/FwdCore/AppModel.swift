@@ -83,6 +83,14 @@ public enum OverallState: Equatable, Sendable {
     case attention
 }
 
+/// Whether forwards are open by name, on port 80.
+public enum NamesState: Equatable, Sendable {
+    case off
+    case on
+    /// Couldn't listen, with what to show.
+    case failed(String)
+}
+
 public enum AppModelError: Error, CustomStringConvertible {
     case portsFileBroken
     case hostOff(String)
@@ -106,6 +114,7 @@ public final class AppModel: ObservableObject {
     /// ssh's own complaint when it can't parse the config, if any.
     @Published public private(set) var sshConfigError: String?
     @Published public private(set) var overall: OverallState = .idle
+    @Published public private(set) var namesState: NamesState = .off
 
     public let paths: Paths
     public let log: Log
@@ -120,10 +129,12 @@ public final class AppModel: ObservableObject {
     private let cleansLeftovers: Bool
     private let userSessions: () async -> UserSessions.Found
     private let busyPorts: (Int32) async -> Set<Int>
+    private let namesPort: UInt16
+    private var nameProxy: NameProxy?
 
-    /// Hosts you have your own ssh session to, from the last look.
     /// Hosts turned off in the panel, kept in state.yaml.
     private var offHosts: Set<String> = []
+    /// Hosts you have your own ssh session to, from the last look.
     private var openSessions: Set<String> = []
     /// Hosts whose proxied session is too new to count, from the last look.
     private var settlingSessions: Set<String> = []
@@ -158,8 +169,10 @@ public final class AppModel: ObservableObject {
                 log: Log? = nil, makeConnection: ((String) -> Connection)? = nil,
                 isPortFree: @escaping (Int) -> Bool = PortAllocator.systemIsFree,
                 userSessions: (() async -> UserSessions.Found)? = nil,
-                busyPorts: @escaping (Int32) async -> Set<Int> = TrafficSampler.busyPorts) {
+                busyPorts: @escaping (Int32) async -> Set<Int> = TrafficSampler.busyPorts,
+                namesPort: UInt16 = 80) {
         self.paths = paths
+        self.namesPort = namesPort
         self.userSessions = userSessions ?? { await UserSessions.current(paths: paths) }
         self.busyPorts = busyPorts
         self.power = power
@@ -191,6 +204,7 @@ public final class AppModel: ObservableObject {
         reloadSSHConfig()
         openSessions = await userSessions().sessions
         await reloadPorts(initial: true)
+        if store.loadOpenByName() { await startNames() }
         if runTimer {
             timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 Task { @MainActor in await self?.tick() }
@@ -201,6 +215,7 @@ public final class AppModel: ObservableObject {
     public func shutdown() async {
         timer?.invalidate()
         forwardsLoad?.cancel()
+        nameProxy?.stop()
         for session in sessions.values { await session.shutdown() }
         log.write("fwd stopped")
         log.flush()
@@ -384,6 +399,17 @@ public final class AppModel: ObservableObject {
         if turnedOn { await sessions[host]?.connect() }
     }
 
+    /// Turns an entry on, whatever it is now. For requests that can arrive
+    /// twice, where a toggle would turn it back off.
+    public func turnOn(host: String, text: String) async throws {
+        await syncFromDisk()
+        var entries = file.hosts[host] ?? []
+        guard let index = entries.firstIndex(where: { $0.port == text }), !entries[index].on else { return }
+        entries[index].on = true
+        try await update(host: host, entries: entries)
+        await sessions[host]?.connect()
+    }
+
     /// Marks an entry keep connected, or not.
     public func setKeep(host: String, text: String, keep: Bool) async throws {
         await syncFromDisk()
@@ -560,6 +586,85 @@ public final class AppModel: ObservableObject {
     /// The Retry and Connect buttons.
     public func connect(host: String) async {
         await sessions[host]?.connect()
+    }
+
+    // MARK: Forwards by name
+
+    public var addressBook: AddressBook { AddressBook(cards: cards) }
+
+    /// The setting, which stays on when port 80 was busy at launch, so the
+    /// next launch tries again.
+    public var openByNameSaved: Bool { store.loadOpenByName() }
+
+    /// The switch in the Open Forwards by Name window. Turning on only sticks
+    /// if fwd gets the port.
+    public func setOpenByName(_ on: Bool) async {
+        if on {
+            await startNames()
+            if namesState == .on { store.saveOpenByName(true) }
+        } else {
+            nameProxy?.stop()
+            nameProxy = nil
+            namesState = .off
+            store.saveOpenByName(false)
+            log.write("names: off")
+        }
+    }
+
+    private func startNames() async {
+        guard namesState != .on else { return }
+        let proxy = NameProxy(port: namesPort, log: log, handler: NameProxy.Handler(
+            route: { [weak self] header in
+                await self?.routeName(header) ?? .page(.unknown(header))
+            },
+            perform: { [weak self] action, route in
+                await self?.performName(action, route)
+            }))
+        proxy.onFailure = { [weak self] reason in
+            Task { @MainActor in self?.namesFailed(reason) }
+        }
+        do {
+            try await proxy.start()
+            nameProxy = proxy
+            namesState = .on
+            log.write("names: listening on port \(namesPort), \(addressBook.addresses.count) addresses")
+        } catch NameProxy.StartError.portInUse {
+            let holder = await NameProxy.holder(ofPort: namesPort)
+            log.write("names: port \(namesPort) is in use by \(holder ?? "something fwd can't see")")
+            namesState = .failed("Port \(namesPort) is in use\(holder.map { " by \($0)" } ?? ""), so fwd can't listen there.")
+        } catch {
+            log.write("names: couldn't listen on port \(namesPort): \(error)")
+            namesState = .failed("fwd couldn't listen on port \(namesPort): \(error)")
+        }
+    }
+
+    private func namesFailed(_ reason: String) {
+        log.write("names: stopped listening: \(reason)")
+        nameProxy = nil
+        namesState = .failed("fwd stopped listening on port \(namesPort): \(reason)")
+    }
+
+    private func routeName(_ header: String) -> NameRoute {
+        rebuild()
+        return addressBook.route(hostHeader: header)
+    }
+
+    /// A click on one of the proxy's pages. Only does what that page offered,
+    /// in case the forward's state moved on since it was drawn.
+    private func performName(_ action: NameAction, _ route: NameRoute) async {
+        guard case .page(.down(let forward)) = route else { return }
+        switch (action, forward.status) {
+        case (.connect, .notConnected):
+            await connect(host: forward.host)
+        case (.turnOn, .off):
+            do {
+                try await turnOn(host: forward.host, text: forward.text)
+            } catch {
+                log.write("names: couldn't turn \(forward.text) on: \(error)", host: forward.host)
+            }
+        default:
+            log.write("names: \(action) on \(forward.address) ignored: already \(forward.status)", host: forward.host)
+        }
     }
 
     /// Turns a Screen Sharing entry the button turned on back off once the
