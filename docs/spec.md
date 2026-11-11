@@ -277,7 +277,9 @@ Connect button.
   timeout, so retries never open more browser tabs.
   Sleeping while that browser sign-in is pending ends the same way, instead
   of starting a second sign-in on wake; a network change leaves the waiting
-  ssh alone.
+  ssh alone. It also leaves alone an ssh started in the last 20 seconds,
+  which may be about to open that browser: the attempt connects or gives up
+  by itself, and the retry loop goes on from there.
 - "Needs attention" is left only by Retry, Connect or `fwd connect`.
   `fwd <host> <port>` adds the port but doesn't retry such a host, because
   scripts and agents run it repeatedly and each retry behind a sign-in proxy
