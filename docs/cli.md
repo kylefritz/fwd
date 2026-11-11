@@ -1,6 +1,8 @@
 # fwd command line: design
 
-Date: 2026-10-16. Status: draft for review. Branch: `cli`.
+Written 2026-10-16 as the design for the `cli` branch, which merged the same
+day as pull request #1. It is kept up to date and describes the command line
+as shipped.
 
 ## Goal
 
@@ -21,8 +23,6 @@ reason why not, in a form it can parse.
   editing files, not through a URL scheme).
 - `forward` is the default command: `fwd 3000` forwards port 3000.
 - The host can be left out when exactly one host is connected.
-- Work happens on the `cli` branch; merging it to `main` publishes the next
-  beta.
 
 ## Commands
 
@@ -37,6 +37,9 @@ fwd remove [host] <port>... [--json]
 fwd keep [host] <port>... [--off] [--json]
 fwd connect [host] [--timeout S] [--json]
 fwd screen [host] [--json]
+fwd code [host] [--json]
+fwd try <pr>|beta|stable [--timeout S] [--json]
+fwd agents                               print instructions for a coding agent
 fwd --version
 fwd --help
 ```
@@ -52,8 +55,11 @@ fwd --help
   release and Homebrew checks compare this with the tag, so nothing else may
   be printed.
 - `--help` / `-h`: usage.
+- `agents`, alone: print the instructions to give a coding agent. With
+  anything after it, `agents` is read as a host: `fwd agents 3000` is a
+  forward.
 - If the first word is one of `forward`, `status`, `wait`, `off`, `remove`,
-  `keep`, `connect`, `screen`, that is the command.
+  `keep`, `connect`, `screen`, `code`, `try`, that is the command.
 - Otherwise the command is `forward` and every argument goes to it. So
   `fwd 3000` and `fwd devbox 3000 5173 api` are forwards.
 - A host literally named like a command is reached by naming the command:
@@ -85,17 +91,19 @@ fwd: 2 hosts are connected (devbox, gpu-box); say which, like: fwd devbox 3000
 fwd: no host is connected; say which, like: fwd devbox 3000
 ```
 
-`status` never needs a host. `screen` follows the rule above. `connect` is
-for a host that isn't connected yet, so its host can be left out when
-exactly one host has ports on and isn't connected.
+`status` never needs a host. `screen` and `code` follow the rule above.
+`connect` is for a host that isn't connected yet, so its host can be left
+out when exactly one host has ports on and isn't connected. `try` takes a
+build, not a host.
 
 Host and port resolution happens in the app, which knows the host list and
 connection states; the command sends the raw arguments.
 
 ### What each command does
 
-All of them go through the same `AppModel` actions the panel uses, and are
-logged in fwd's log as `cli: <command> <args>`.
+Every command but `agents` is sent to the app and logged in fwd's log as
+`cli: <command> <args>`. The ones that act on hosts and ports go through
+the same `AppModel` actions the panel uses.
 
 - **forward**: for each port, add it (or turn it on if it is already in the
   list, setting its name if one is given), exactly like typing it in the
@@ -106,7 +114,12 @@ logged in fwd's log as `cli: <command> <args>`.
   is forwarded or blocked. A range returns as soon as the host is connected,
   with whatever it currently forwards. With `--wait`, also wait until each
   single port is live (a server answers on the remote), sharing the same
-  timeout.
+  timeout. A host in "needs attention" is not retried: the port is added,
+  and the command exits 1 with `<host> needs you: ... Run: fwd connect
+  <host> after fixing it`. Scripts and agents run `fwd <host> <port>` again
+  and again, and each retry behind a sign-in proxy would open a browser tab.
+  Only `fwd connect` (or Retry and Connect in the panel) tries such a host
+  again.
 - **status**: hosts with ports, or that are connected, in panel order; with
   a host, just that host; `--all` includes every host in the ssh config.
 - **wait**: block until the port is live, up to `--timeout` (default 60s).
@@ -118,9 +131,26 @@ logged in fwd's log as `cli: <command> <args>`.
 - **keep**: mark ports Keep connected; `--off` clears it. Clearing it on a
   connected host does not drop the connection (same as the panel).
 - **connect**: the Connect button. Waits up to `--timeout` (default 30s)
-  for the host to connect.
+  for the host to connect. The host needs at least one port on. This is the
+  command that retries a host in "needs attention".
 - **screen**: the Screen Sharing button. Forwards 5900, opens the viewer,
   and prints the `vnc://` URL.
+- **code**: the VS Code button, without its herdr menu. Opens a new
+  Remote-SSH window on the host in VS Code (VS Code Insiders if that is the
+  one installed), with no folder open. The host must be in the ssh config.
+  Exit 1 if neither editor is installed, or if fwd is reading an ssh config
+  other than the default one, which VS Code doesn't read.
+- **try**: switch the app to another build. The one argument is a pull
+  request's number (`42`, `#42` or `pr-42`), `beta`, or `stable` (`release`
+  means the same). The app downloads and checks that build as it does an
+  update, answers `fwd is restarting into ...`, and restarts into it about
+  half a second later. It waits up to `--timeout` (default 60s) for the
+  build to be ready; past that it exits 4 and fwd stays as it is. Exit 1 if
+  the pull request has no preview build, or for a Homebrew copy, which
+  can't switch builds.
+- **agents**: print a block of instructions for a coding agent's
+  `CLAUDE.md` or `AGENTS.md`. It doesn't contact the app. The README carries
+  the same text, and a test keeps the two identical.
 
 ## Output
 
@@ -195,7 +225,8 @@ Replies:
 - `status`: `{"ok":true,"hosts":[host, ...]}`
 - `forward`, `off`, `remove`, `keep`, `wait`: `{"ok":true,"host":host}`,
   where `host.ports` holds only the ports the command named.
-- `connect`: `{"ok":true,"host":host}`.
+- `connect`, `code`: `{"ok":true,"host":host}`.
+- `try`: `{"ok":true,"message":"fwd is restarting into PR #42's preview (0.3.2-beta.24)."}`.
 - `screen`: `{"ok":true,"host":host,"url":"vnc://kyle@localhost:5901"}`, the
   host object like every other command.
 - Failure: `{"ok":false,"code":1,"error":"devbox needs you: ...","host":host?}`.
@@ -208,7 +239,7 @@ Replies:
 | 1 | couldn't do it: needs attention, blocked, unreachable, port off for `wait` |
 | 2 | bad usage: unknown command, host or port; host needed but ambiguous |
 | 3 | the fwd app couldn't be started or reached, or speaks another protocol version |
-| 4 | timed out (`--wait`, `wait`, `connect`, `forward`) |
+| 4 | timed out (`--wait`, `wait`, `connect`, `forward`, `try`) |
 
 `forward` exits 0 when every port is forwarded (`waiting`, `live` or
 `active`); 1 if any is blocked or the host needs attention; 4 if the
@@ -236,19 +267,21 @@ timeout passes first. With `--wait`, only `live` and `active` count.
 - A request with a different `v` gets `{"ok":false,"code":3,"error":
   "This fwd command and the fwd app are different versions; update fwd."}`.
 
-### The command: `fwd-cli` (new executable target)
+### The command: `fwd-cli` (an executable target)
 
-- Replaces `scripts/fwd`. `scripts/bundle.sh` copies the built binary to
+- `scripts/bundle.sh` copies the built binary to
   `fwd.app/Contents/Resources/bin/fwd`, the path the ~/.local/bin symlink and
-  the Homebrew formula already point at, so neither changes.
+  the Homebrew formula point at. (It replaced an earlier shell script at the
+  same path.)
 - Links FwdCore for the request and reply types, `Paths` and `PortPattern`.
 - Finds its app by resolving its own path (through symlinks) to the
   enclosing `fwd.app`, and reads the version from that `Info.plist`. Run
   outside a bundle (from `.build`), the version is `dev`.
 - Honors `FWD_HOME` like the app, so tests and sandboxes reach a sandboxed
   app's socket.
-- No arguments: `open -b io.github.kylefritz.fwd --args --show-window`, falling
-  back to opening the enclosing bundle, as the script does today.
+- No arguments: prints the help and starts nothing. `fwd open` is what opens
+  the window: `open -b io.github.kylefritz.fwd --args --show-window`, falling
+  back to opening the enclosing bundle.
 - If the socket isn't there or refuses the connection, it starts the app in
   the background without a window (`open -g -b io.github.kylefritz.fwd`,
   falling back to the enclosing bundle), then retries every 200 ms for up to
@@ -293,10 +326,10 @@ timeout passes first. With `--wait`, only `live` and `active` count.
 
 ## Documentation
 
-- README "From the terminal" becomes a short section on the command line
-  with examples for people and a paragraph for agents (`--json`, exit codes,
-  `fwd 3000 --wait`).
-- `docs/spec.md` "Terminal command" is rewritten to match this design.
+- README "From the terminal" is a short section on the command line with
+  examples for people and a block to paste into an agent's instructions
+  (`--json`, exit codes, `--wait`), which `fwd agents` also prints.
+- `docs/spec.md` "Terminal command" summarizes this document.
 - `fwd --help` lists every command, the port syntax and the exit codes.
 
 ## Out of scope
