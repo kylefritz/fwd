@@ -31,10 +31,16 @@ public struct Caller: Equatable, Sendable {
 
     /// What's above the `fwd` command, nearest first: `zsh ← node ← launchd`.
     /// Program names only, so it's safe in the log.
+    /// Ends in `?` when the chain stops short of launchd, because a
+    /// process's parent couldn't be read (it had already gone, say).
     public var summary: String {
-        let above = chain.dropFirst().map(\.name)
+        guard !chain.isEmpty else { return "unknown" }
+        let above = chain.dropFirst().map(\.name) + (complete ? [] : ["?"])
         return above.isEmpty ? "unknown" : above.joined(separator: " ← ")
     }
+
+    /// The chain reaches launchd, so nothing above the command is missing.
+    public var complete: Bool { chain.last?.pid == 1 }
 
     static let maxDepth = 12
 

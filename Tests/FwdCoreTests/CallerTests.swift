@@ -25,6 +25,10 @@ import Testing
         #expect(caller.summary == "sh ← node ← launchd")
         #expect(!caller.summary.contains("hunter2"))
         #expect(Caller(chain: []).summary == "unknown")
+        // A parent that couldn't be read leaves a visible gap, not a short chain.
+        let cut = Caller(chain: [.init(pid: 30, name: "fwd"), .init(pid: 20, name: "sh")])
+        #expect(!cut.complete)
+        #expect(cut.summary == "sh ← ?")
     }
 
     @Test func theServerSeesWhoConnected() async throws {
@@ -73,12 +77,20 @@ import Testing
             .init(pid: 1, name: "launchd"),
         ])
         for _ in 0..<CommandLog.loopAt { _ = await handler.handle(ControlRequest(cmd: "status"), caller: caller) }
+        // Options are part of what ran; a lookup that failed says so.
+        let cut = Caller(chain: [.init(pid: 3, name: "fwd"), .init(pid: 2, name: "sh")])
+        _ = await handler.handle(ControlRequest(cmd: "status", all: true), caller: cut)
+        _ = await handler.handle(ControlRequest(cmd: "status", all: true))
+        #expect(rig.model.commands.entries.map(\.command).contains("status --all"))
         rig.model.log.flush()
         let text = try String(contentsOf: rig.model.paths.logFile, encoding: .utf8)
+        #expect(text.contains("cli: status --all (from sh ← ?)"))
+        #expect(text.contains("couldn't read what started sh (pid 2)"))
+        #expect(text.contains("cli: status --all (caller unknown: the socket didn't give the command's process)"))
         #expect(text.contains("cli: status (from node ← launchd)"))
         #expect(text.contains("that's \(CommandLog.loopAt) runs of \"status\""))
         #expect(!text.contains("hunter2"), "arguments never reach the log")
-        #expect(rig.model.commands.entries.first?.count == CommandLog.loopAt)
+        #expect(rig.model.commands.entries.last?.count == CommandLog.loopAt)
         await rig.model.shutdown()
     }
 }

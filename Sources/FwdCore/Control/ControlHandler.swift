@@ -26,9 +26,19 @@ public final class ControlHandler {
     /// `caller` is who ran the command, when the socket could say.
     public func handle(_ request: ControlRequest, caller: Caller? = nil) async -> ControlReply {
         guard request.v == ControlRequest.version else { return .failure(.versionMismatch) }
-        let command = ([request.cmd] + request.args).joined(separator: " ")
+        // With its options, so `keep 3000` and `keep 3000 --off` are told apart.
+        let options = [request.keep ? "--keep" : nil, request.wait ? "--wait" : nil,
+                       request.off ? "--off" : nil, request.all ? "--all" : nil].compactMap { $0 }
+        let command = ([request.cmd] + request.args + options).joined(separator: " ")
         // Program names only: a full command line can hold a token.
-        model.log.write("cli: \(command)" + (caller.map { " (from \($0.summary))" } ?? ""))
+        if let caller {
+            model.log.write("cli: \(command) (from \(caller.summary))")
+            if !caller.complete, let last = caller.chain.last {
+                model.log.write("cli: couldn't read what started \(last.name) (pid \(last.pid)); the caller's chain stops there")
+            }
+        } else {
+            model.log.write("cli: \(command) (caller unknown: the socket didn't give the command's process)")
+        }
         let entry = model.commands.record(command: command, caller: caller)
         if entry.count == CommandLog.loopAt {
             let minutes = max(1, Int(entry.last.timeIntervalSince(entry.first) / 60))
