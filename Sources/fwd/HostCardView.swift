@@ -28,6 +28,7 @@ struct StateStyle {
         case .retrying: return StateStyle(symbol: "arrow.triangle.2.circlepath", color: .orange, words: "reconnecting")
         case .paused: return StateStyle(symbol: "pause.circle", color: .secondary, words: "paused")
         case .needsAttention: return StateStyle(symbol: "exclamationmark.triangle.fill", color: .orange, words: "needs attention")
+        case .off: return StateStyle(symbol: "moon.zzz", color: .secondary, words: "turned off")
         }
     }
 
@@ -120,6 +121,8 @@ struct HostCardView: View {
                 Button("Open in Terminal") { app.openInTerminal(host: card.name) }
                     .help("Runs ssh \(card.name). fwd connects while that session is open.")
             }
+            Divider()
+            TurnOffHostButton(host: card.name, model: model)
         } label: {
             Image(systemName: "ellipsis")
         }
@@ -151,6 +154,17 @@ struct HostCardView: View {
                 ForEach(card.configPills) { ConfigPillView(pill: $0) }
             }
         }
+    }
+}
+
+/// Turns the host off and moves it to Hidden hosts.
+struct TurnOffHostButton: View {
+    let host: String
+    let model: AppModel
+
+    var body: some View {
+        Button("Turn Off and Hide") { Task { await model.setHostOff(host: host, off: true) } }
+            .help("fwd stops connecting to \(host) for any reason and lists it under Hidden hosts. Its ports are kept for when you turn it back on.")
     }
 }
 

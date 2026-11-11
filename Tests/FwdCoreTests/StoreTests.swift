@@ -99,6 +99,22 @@ func tempPaths() -> Paths {
         #expect(throws: (any Error).self) { try Store.decodePorts(text) }
     }
 
+    @Test func offHostsRoundTripAndAStateFileMissingKeysStillReads() throws {
+        let store = Store(paths: tempPaths())
+        #expect(store.loadOffHosts().isEmpty)
+        store.saveSticky(["devbox|3000|3000": 3001])
+        store.saveOffHosts(["staging", "old-laptop"])
+        #expect(store.loadOffHosts() == ["staging", "old-laptop"])
+        #expect(store.loadSticky() == ["devbox|3000|3000": 3001], "the other state is kept")
+        store.saveOffHosts([])
+        #expect(!(try String(contentsOf: store.paths.stateFile, encoding: .utf8)).contains("off_hosts"))
+
+        // Written by hand, with nothing but the list.
+        try "off_hosts:\n- homelab\n".write(to: store.paths.stateFile, atomically: true, encoding: .utf8)
+        #expect(store.loadOffHosts() == ["homelab"])
+        #expect(store.loadSticky().isEmpty)
+    }
+
     @Test func stickyRoundTripAndMissingFile() {
         let store = Store(paths: tempPaths())
         #expect(store.loadSticky().isEmpty)

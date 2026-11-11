@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+# A newer push to a pull request cancels the run it replaces. Runs on main
+# are never cancelled: beta.yml publishes from each one that passes. Each
+# gets a group of its own, since a shared group keeps only one run waiting
+# and would drop a queued main run when the next push arrives.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Build and test (macOS)

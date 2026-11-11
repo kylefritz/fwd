@@ -44,6 +44,44 @@ public enum IssueReport {
         return kept.joined(separator: "\n").trimmingCharacters(in: .newlines)
     }
 
+    /// Folds a run of lines that say the same thing into its first line,
+    /// marked with how many there were and when the last one came:
+    /// `… event: networkUp  [×8, last 11:03:56]`. A waking laptop writes the
+    /// same line many times, and a shorter log is likelier to fit in the
+    /// issue link.
+    public static func collapse(_ log: String) -> String {
+        // "2026-11-09T11:03:56.448-05:00 message" -> (time of day, message)
+        func parts(_ line: Substring) -> (time: Substring, message: Substring)? {
+            guard let space = line.firstIndex(of: " "), let t = line[..<space].firstIndex(of: "T") else { return nil }
+            let clock = line[line.index(after: t)..<space].prefix(8)
+            guard clock.count == 8 else { return nil }
+            return (clock, line[line.index(after: space)...])
+        }
+        var out: [String] = []
+        var first: Substring?
+        var message: Substring?
+        var lastTime: Substring = ""
+        var count = 0
+        func flush() {
+            guard let first else { return }
+            out.append(count > 1 ? "\(first)  [×\(count), last \(lastTime)]" : String(first))
+        }
+        for line in log.split(separator: "\n", omittingEmptySubsequences: false) {
+            if let (time, text) = parts(line), text == message {
+                count += 1
+                lastTime = time
+                continue
+            }
+            flush()
+            first = line
+            message = parts(line)?.message
+            lastTime = parts(line)?.time ?? ""
+            count = 1
+        }
+        flush()
+        return out.joined(separator: "\n")
+    }
+
     /// Removes what shouldn't be public: URL queries (sign-in tokens live
     /// there), `key=value` secrets, IP addresses, and the home folder and
     /// user name. With `hideHosts`, ssh host aliases become `host1`, `host2`
@@ -80,8 +118,8 @@ public enum IssueReport {
 
     public struct Issue: Sendable {
         public let url: URL
-        /// False when the log was too long for the link; the person then
-        /// adds it to the issue themselves.
+        /// False when the log was too long for the link. The link then
+        /// leaves the Log field empty and the person pastes the log in.
         public let logInline: Bool
     }
 
@@ -99,7 +137,9 @@ public enum IssueReport {
         guard let log, !log.isEmpty else { return Issue(url: link(base), logInline: true) }
         let withLog = link(base + [("log", log)])
         if withLog.absoluteString.count <= maxURLLength { return Issue(url: withLog, logInline: true) }
-        let note = "The log was too long to include here. Drag in the file fwd showed in Finder, or paste it: it's on your clipboard."
-        return Issue(url: link(base + [("log", note)]), logInline: false)
+        // An hour of log rarely fits in a link. The field is left empty for
+        // the log to be pasted into: a note there would have to be deleted
+        // first, and the paste then tended to land in another field (#21).
+        return Issue(url: link(base), logInline: false)
     }
 }

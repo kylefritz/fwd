@@ -31,8 +31,21 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        # The install notes come first, then GitHub's list of changes.
-        run: gh release create "$GITHUB_REF_NAME" build/fwd.zip --title "fwd $VERSION" --notes-file .github/release-notes.md --generate-notes
+        run: |
+          # A re-run after a later step failed: the release is already
+          # there, so only replace its asset and carry on to the tap.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "$GITHUB_REF_NAME is already published; replacing fwd.zip"
+            gh release upload "$GITHUB_REF_NAME" build/fwd.zip --clobber
+            exit 0
+          fi
+          # The install notes come first, then GitHub's list of changes.
+          gh release create "$GITHUB_REF_NAME" build/fwd.zip --title "fwd $VERSION" --notes-file .github/release-notes.md --generate-notes
       - name: Update the Homebrew tap
         if: ${{ env.TAP_DEPLOY_KEY != '' }}
         run: scripts/update-formula.sh "$VERSION"
+      - name: Say the Homebrew tap was not updated
+        if: ${{ env.TAP_DEPLOY_KEY == '' }}
+        # A block, since ": " in a plain YAML value starts a mapping.
+        run: |
+          echo "::warning::The Homebrew tap was not updated: the TAP_DEPLOY_KEY secret is empty, so brew still serves the previous version."

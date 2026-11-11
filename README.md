@@ -200,10 +200,19 @@ run here (a browser, curl, tests) needs a server on a remote host.
 - The host can be left out when exactly one host is connected.
 - Exit codes: 0 done, 1 couldn't (read `error`), 2 bad usage, 3 the fwd
   app isn't reachable, 4 timed out.
+- An `error` saying a host "needs you" means it is waiting for a person (a
+  browser sign-in, a key). Tell them and stop: running the command again
+  won't connect it.
 - Don't add `--keep` unless asked: it keeps the host connected after
   the session that started it ends.
 - `fwd --help` lists everything.
 ```
+
+To see what has been running `fwd`, choose **Command Line Activity…** in the
+••• menu. It lists each command with how often it ran and the programs that
+ran it, so a script or agent stuck in a loop is one row with a high count.
+The log names the caller too: `cli: forward devbox 3000 (from zsh ← node ←
+launchd)`.
 
 The command starts fwd if it isn't running. Homebrew installs it; otherwise
 choose **Install Terminal Command** in the ••• menu.
@@ -222,6 +231,12 @@ Otherwise the card says *Not connected · starts when you ssh in* and offers
 **Connect**. That way fwd never keeps knocking on a machine you've stopped
 using, and never opens a sign-in page behind your back.
 
+To make fwd leave a host alone entirely, choose **Turn Off and Hide** in the
+host's ••• menu. fwd drops its connection and won't connect it for any
+reason: not your ssh sessions, not a kept port, not the `fwd` command. The
+host moves to **Hidden hosts** at the bottom of the panel, with its ports
+kept as they were, and **Turn On** brings it back.
+
 - A dead link is noticed within about 15 seconds. Retries come after 2, 5, 15
   and 30 seconds, then once a minute.
 - Asleep or offline, fwd does nothing at all, and picks up again when the Mac
@@ -230,7 +245,9 @@ using, and never opens a sign-in page behind your back.
   minutes for you to sign in and then connects by itself.
 - When ssh needs a person (key not loaded, unknown host key, a browser
   sign-in left unfinished), fwd stops and shows **Retry** and **Open in
-  Terminal**.
+  Terminal**. Only **Retry** or `fwd connect <host>` tries again: running
+  `fwd <host> <port>` once more doesn't, so a script can't open a sign-in
+  page each time it runs.
 
 ## Configuration
 
@@ -240,7 +257,7 @@ Everything lives in plain files, so it's easy to keep in your dotfiles.
 |---|---|
 | `~/.config/fwd/ports.yaml` | Your entries. Edit by hand if you like; changes apply within a second. |
 | `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `send_usage_stats: false` keeps them but stops the install count, `update_channel: beta` follows every build of `main`, `herdr: false` makes the VS Code button open VS Code at once instead of listing herdr's agents and folders. |
-| `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken. Safe to delete. |
+| `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken, and the hosts you turned off. Safe to delete: turned-off hosts come back on. |
 | `~/Library/Logs/fwd/fwd.log` | The log. **Show Log** in the ••• menu opens it; hold ⌥ for **Copy Log Location**. |
 
 ```yaml
@@ -312,7 +329,8 @@ Again**. Until then `web.localhost:8765` still works with the port number.
 Choose **Report a Bug…** in the ••• menu. Pick how much of the log to
 include, check the preview, and fwd opens a prefilled GitHub issue. Sign-in
 tokens, IP addresses and your home folder are always removed, and host
-names can be. `tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing
+names can be. A log too long for the link is copied and opened in a text
+editor, for you to paste into the issue's Log field. `tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing
 as it happens.
 
 </details>

@@ -23,9 +23,28 @@ public final class ControlHandler {
         self.pollInterval = pollInterval
     }
 
-    public func handle(_ request: ControlRequest) async -> ControlReply {
+    /// `caller` is who ran the command, when the socket could say.
+    public func handle(_ request: ControlRequest, caller: Caller? = nil) async -> ControlReply {
         guard request.v == ControlRequest.version else { return .failure(.versionMismatch) }
-        model.log.write("cli: \(([request.cmd] + request.args).joined(separator: " "))")
+        // With its options, so `keep 3000` and `keep 3000 --off` are told apart.
+        let options = [request.keep ? "--keep" : nil, request.wait ? "--wait" : nil,
+                       request.off ? "--off" : nil, request.all ? "--all" : nil].compactMap { $0 }
+        let command = ([request.cmd] + request.args + options).joined(separator: " ")
+        // Program names only: a full command line can hold a token.
+        if let caller {
+            model.log.write("cli: \(command) (from \(caller.summary))")
+            if !caller.complete, let last = caller.chain.last {
+                model.log.write("cli: couldn't read what started \(last.name) (pid \(last.pid)); the caller's chain stops there")
+            }
+        } else {
+            model.log.write("cli: \(command) (caller unknown: the socket didn't give the command's process)")
+        }
+        let entry = model.commands.record(command: command, caller: caller)
+        if entry.count == CommandLog.loopAt {
+            let minutes = max(1, Int(entry.last.timeIntervalSince(entry.first) / 60))
+            model.log.write("cli: that's \(entry.count) runs of \"\(command)\" in \(minutes) min from "
+                            + "\(caller?.summary ?? "an unknown caller"); Command Line Activity in the ••• menu shows what runs it")
+        }
         do {
             switch request.cmd {
             case "status": return try status(request)
@@ -58,6 +77,7 @@ public final class ControlHandler {
     private func target(_ request: ControlRequest, needsPorts: Bool) throws -> ControlTarget {
         let target = try ControlTarget.resolve(request.args, hosts: cards.map(\.name),
                                                defaultHosts: connected, noun: "connected")
+        if card(target.host)?.off == true { throw turnedOff(target.host, request) }
         if needsPorts, target.ports.isEmpty {
             throw ControlError.usage("say which port, like: fwd \(target.host) 3000")
         }
@@ -85,6 +105,13 @@ public final class ControlHandler {
                 throw ControlError.timedOut("timed out after \(Int(timeout.rounded(.up)))s waiting for \(what)")
             }
         }
+    }
+
+    /// The answer for a command aimed at a host that is turned off, logged
+    /// so the log shows what became of the command.
+    private func turnedOff(_ host: String, _ request: ControlRequest) -> ControlError {
+        model.log.write("cli: refused \(request.cmd): this host is turned off", host: host)
+        return .failed("\(host) is turned off in fwd; turn it on under Hidden hosts in the panel")
     }
 
     /// Why a host can't get anywhere right now, if it can't.
@@ -125,7 +152,9 @@ public final class ControlHandler {
     private func forward(_ request: ControlRequest) async throws -> ControlReply {
         let target = try target(request, needsPorts: true)
         for port in target.ports {
-            try await model.add(host: target.host, text: port)
+            // Scripts and agents run this again and again, so it must not
+            // restart a host that is waiting for a sign-in; `fwd connect` does.
+            try await model.add(host: target.host, text: port, unattended: true)
             if request.keep, let text = ControlTarget.canonical(port) {
                 try await model.setKeep(host: target.host, text: text, keep: true)
             }
@@ -200,9 +229,10 @@ public final class ControlHandler {
 
     private func connect(_ request: ControlRequest) async throws -> ControlReply {
         // Here the host left out is the one host waiting to connect.
-        let waiting = cards.filter { $0.state != .connected && $0.pills.contains(where: \.on) }.map(\.name)
+        let waiting = cards.filter { !$0.off && $0.state != .connected && $0.pills.contains(where: \.on) }.map(\.name)
         let target = try ControlTarget.resolve(request.args, hosts: cards.map(\.name),
                                                defaultHosts: waiting, noun: "waiting to connect")
+        if card(target.host)?.off == true { throw turnedOff(target.host, request) }
         guard card(target.host)?.pills.contains(where: \.on) == true else {
             throw ControlError.failed("\(target.host) has no ports on; forward one first, like: fwd \(target.host) 3000")
         }

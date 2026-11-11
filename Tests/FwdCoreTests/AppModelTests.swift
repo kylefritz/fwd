@@ -27,7 +27,7 @@ import Testing
                              },
                              // These tests are about the model, not this machine's ports or ssh sessions.
                              isPortFree: { _ in true },
-                             userSessions: { box.sessions },
+                             userSessions: { UserSessions.Found(sessions: box.sessions) },
                              busyPorts: { _ in box.busy },
                              namesPort: UInt16(namesPort))
             self.box = box
@@ -340,6 +340,54 @@ import Testing
         try await rig.model.clearAll(host: "devbox")
         #expect(try Store(paths: rig.model.paths).loadPorts().hosts.keys.sorted() == ["homelab"])
         try await eventually("card has no pills") { rig.card("devbox")?.pills.isEmpty == true }
+    }
+
+    @Test func turningAHostOffDropsItKeepsItsPortsAndSurvivesARestart() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        try await rig.model.add(host: "devbox", text: "3000")
+        try await rig.model.setKeep(host: "devbox", text: "3000", keep: true)
+        try await eventually("up") { rig.pill("devbox", "3000")?.local == 3000 }
+
+        await rig.model.setHostOff(host: "devbox", off: true)
+        try await eventually("off") { rig.card("devbox")?.off == true && rig.card("devbox")?.state == .off }
+        #expect(rig.box.made["devbox"]?.last?.stopCount == 1)
+        #expect(rig.pill("devbox", "3000")?.on == true, "its ports are kept as they were")
+        #expect(rig.model.overall == .idle)
+        await #expect(throws: AppModelError.self) { try await rig.model.add(host: "devbox", text: "4000") }
+        #expect(Store(paths: rig.model.paths).loadOffHosts() == ["devbox"])
+        // A host with no ports can be hidden too.
+        await rig.model.setHostOff(host: "homelab", off: true)
+        #expect(Store(paths: rig.model.paths).loadOffHosts() == ["devbox", "homelab"])
+
+        // Turn all off is about the hosts you can see.
+        try await rig.model.add(host: "staging", text: "8080")
+        try await rig.model.turnAllOff()
+        #expect(rig.pill("staging", "8080")?.on == false)
+        #expect(rig.pill("devbox", "3000")?.on == true, "a hidden host's ports stay as they were")
+
+        // Your own ssh session doesn't bring it back.
+        rig.box.sessions = ["devbox"]
+        await rig.model.refreshUserSessions()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(rig.box.made["devbox"]?.count == 1)
+        await rig.model.shutdown()
+
+        // A new launch reads the same state and doesn't connect the kept port.
+        let again = AppModel(paths: rig.model.paths, power: FakePower(), makeConnection: { host in
+            let c = FakeConnection()
+            rig.box.made[host, default: []].append(c)
+            return c
+        }, isPortFree: { _ in true }, userSessions: { UserSessions.Found() })
+        await again.start(runTimer: false)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(again.cards.first { $0.name == "devbox" }?.off == true)
+        #expect(rig.box.made["devbox"]?.count == 1, "still off after a restart")
+
+        await again.setHostOff(host: "devbox", off: false)
+        try await eventually("on again: the kept port reconnects") { rig.box.made["devbox"]?.count == 2 }
+        #expect(Store(paths: rig.model.paths).loadOffHosts() == ["homelab"])
+        await again.shutdown()
     }
 
     @Test func aHostMissingFromTheConfigKeepsItsCardMarked() async throws {

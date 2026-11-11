@@ -70,6 +70,8 @@ public struct HostCard: Identifiable, Equatable, Sendable {
     /// Whether the host's Screen Sharing port is listening, from the last
     /// scan. nil until fwd has scanned it.
     public var screenSharing: Bool? = nil
+    /// Turned off: fwd won't connect it, and the panel lists it under Hidden hosts.
+    public var off = false
     public var id: String { name }
     /// Hosts with nothing to show are listed compactly instead of as a card.
     public var isProminent: Bool { !pills.isEmpty || !configPills.isEmpty }
@@ -91,9 +93,13 @@ public enum NamesState: Equatable, Sendable {
 
 public enum AppModelError: Error, CustomStringConvertible {
     case portsFileBroken
+    case hostOff(String)
 
     public var description: String {
-        "ports.yaml has an error. Fix or delete it, then try again."
+        switch self {
+        case .portsFileBroken: return "ports.yaml has an error. Fix or delete it, then try again."
+        case .hostOff(let host): return "\(host) is turned off. Turn it on under Hidden hosts first."
+        }
     }
 }
 
@@ -114,18 +120,24 @@ public final class AppModel: ObservableObject {
     public let log: Log
     public let store: Store
     public let allocator: PortAllocator
+    /// The `fwd` commands run since launch and who ran them.
+    public let commands = CommandLog()
 
     private let power: PowerEvents
     private let timing: Timing
     private let makeConnection: (String) -> Connection
     private let cleansLeftovers: Bool
-    private let userSessions: () async -> Set<String>
+    private let userSessions: () async -> UserSessions.Found
     private let busyPorts: (Int32) async -> Set<Int>
     private let namesPort: UInt16
     private var nameProxy: NameProxy?
 
+    /// Hosts turned off in the panel, kept in state.yaml.
+    private var offHosts: Set<String> = []
     /// Hosts you have your own ssh session to, from the last look.
     private var openSessions: Set<String> = []
+    /// Hosts whose proxied session is too new to count, from the last look.
+    private var settlingSessions: Set<String> = []
     private var lookingForSessions = false
 
     struct ScreenSharingUse {
@@ -156,7 +168,7 @@ public final class AppModel: ObservableObject {
     public init(paths: Paths = .fromEnvironment(), power: PowerEvents, timing: Timing = Timing(),
                 log: Log? = nil, makeConnection: ((String) -> Connection)? = nil,
                 isPortFree: @escaping (Int) -> Bool = PortAllocator.systemIsFree,
-                userSessions: (() async -> Set<String>)? = nil,
+                userSessions: (() async -> UserSessions.Found)? = nil,
                 busyPorts: @escaping (Int32) async -> Set<Int> = TrafficSampler.busyPorts,
                 namesPort: UInt16 = 80) {
         self.paths = paths
@@ -187,8 +199,10 @@ public final class AppModel: ObservableObject {
         power.onEvent = { [weak self] event in
             Task { @MainActor in await self?.handle(event) }
         }
+        offHosts = store.loadOffHosts()
+        if !offHosts.isEmpty { log.write("hosts turned off: \(offHosts.sorted().joined(separator: ", "))") }
         reloadSSHConfig()
-        openSessions = await userSessions()
+        openSessions = await userSessions().sessions
         await reloadPorts(initial: true)
         if store.loadOpenByName() { await startNames() }
         if runTimer {
@@ -239,11 +253,23 @@ public final class AppModel: ObservableObject {
         guard sessions.values.contains(where: \.hasEnabledEntries) else {
             // Not looked at, so not trusted when a port is turned on later.
             openSessions = []
+            settlingSessions = []
             return
         }
         lookingForSessions = true
         defer { lookingForSessions = false }
-        openSessions = await userSessions()
+        let found = await userSessions()
+        openSessions = found.sessions
+        // Said once per new ssh, so a retrying one shows up in the log without
+        // a line every two seconds.
+        for (host, session) in sessions where session.hasEnabledEntries {
+            let key = host.lowercased()
+            if found.settling.contains(key), !settlingSessions.contains(key) {
+                log.write("an ssh session goes through a proxy and just started; "
+                          + "counting it once it has lasted \(Int(UserSessions.proxiedSettle))s", host: host)
+            }
+        }
+        settlingSessions = found.settling
         for (host, session) in sessions { await session.setUserSession(hasUserSession(host)) }
     }
 
@@ -332,8 +358,10 @@ public final class AppModel: ObservableObject {
 
     /// Adds `text` (a port pattern, optionally followed by a name) and turns
     /// it on. An entry that's already there is turned on, and renamed if a
-    /// name was given.
-    public func add(host: String, text: String) async throws {
+    /// name was given. `unattended` marks a caller that may be a script (the
+    /// command line): it won't restart a host that is waiting for a person.
+    public func add(host: String, text: String, unattended: Bool = false) async throws {
+        guard !offHosts.contains(host) else { throw AppModelError.hostOff(host) }
         let (portText, name) = EntryName.split(text)
         let pattern = try PortPattern.parse(portText)
         await syncFromDisk()
@@ -345,7 +373,7 @@ public final class AppModel: ObservableObject {
             entries.append(Entry(port: pattern.text, on: true, name: name))
         }
         try await update(host: host, entries: entries)
-        await sessions[host]?.connect()
+        await sessions[host]?.connect(unattended: unattended)
     }
 
     /// Sets or clears (with an empty string) an entry's name.
@@ -408,7 +436,9 @@ public final class AppModel: ObservableObject {
     public func turnAllOff() async throws {
         await syncFromDisk()
         guard fileError == nil else { throw AppModelError.portsFileBroken }
-        for (host, entries) in file.hosts {
+        // A host that is turned off keeps its ports as they are, for when
+        // it comes back.
+        for (host, entries) in file.hosts where !offHosts.contains(host) {
             var off = entries
             for i in off.indices { off[i].on = false }
             file.hosts[host] = off
@@ -534,6 +564,23 @@ public final class AppModel: ObservableObject {
             log.write("herdr: the host also said: \(stderr.prefix(300))", host: host)
         }
         return answer.listing
+    }
+
+    /// Turns a whole host off, or back on. Off, fwd drops its connection and
+    /// won't connect it for any reason; its ports and their settings stay as
+    /// they are for when it comes back.
+    public func setHostOff(host: String, off: Bool) async {
+        guard off != offHosts.contains(host) else { return }
+        if off { offHosts.insert(host) } else { offHosts.remove(host) }
+        store.saveOffHosts(offHosts)
+        if off { screenSharing[host] = nil }
+        if let session = sessions[host] {
+            await session.setOff(off)
+        } else {
+            // No ports, so no session to say it.
+            log.write(off ? "turned off" : "turned on", host: host)
+        }
+        rebuild()
     }
 
     /// The Retry and Connect buttons.
@@ -686,6 +733,7 @@ public final class AppModel: ObservableObject {
         for host in Array(file.hosts.keys) {
             guard let entries = file.hosts[host] else { continue }
             let session = session(for: host)
+            await session.setOff(offHosts.contains(host))
             await session.setUserSession(hasUserSession(host))
             await session.setEntries(entries)
         }
@@ -731,7 +779,7 @@ public final class AppModel: ObservableObject {
         var nowBusy: [String: Set<Int>] = [:]
         for (host, session) in sessions where session.state == .connected {
             if let pid = session.masterPID, !session.active.isEmpty {
-                nowBusy[host] = await TrafficSampler.busyPorts(masterPID: pid)
+                nowBusy[host] = await busyPorts(pid)
             }
         }
         busy = nowBusy
@@ -756,7 +804,8 @@ public final class AppModel: ObservableObject {
 
         var built = names.map { name -> HostCard in
             let session = sessions[name]
-            let state = session?.state ?? .idle
+            // A host with no ports has no session to say it's off.
+            let state = offHosts.contains(name) ? HostState.off : (session?.state ?? .idle)
             let pills = Self.displayOrder(file.hosts[name] ?? []).map { pill(for: $0, host: name, session: session) }
             let configPills = Self.configDisplayOrder(configForwards[name] ?? []).map {
                 let key = SSHConfig.ForwardKey(kind: $0.kind, listenPort: $0.listenPort)
@@ -767,7 +816,8 @@ public final class AppModel: ObservableObject {
                             statusLine: statusLine(state, session: session),
                             pills: pills, configPills: configPills,
                             lastError: session?.lastError, inConfig: inConfig.contains(name),
-                            screenSharing: session?.listening.map { $0.contains(ScreenSharing.remotePort) })
+                            screenSharing: session?.listening.map { $0.contains(ScreenSharing.remotePort) },
+                            off: offHosts.contains(name))
         }
         // Hosts in use first, in config order; the stable sort keeps that order.
         built.sort { rank($0) < rank($1) }
@@ -823,6 +873,7 @@ public final class AppModel: ObservableObject {
             return "Reconnecting…" + (session?.lastError.map { " \($0)" } ?? "")
         case .paused(let why): return "Paused (\(why))"
         case .needsAttention(let message): return message
+        case .off: return "Turned off"
         }
     }
 

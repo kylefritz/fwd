@@ -81,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private var reportWindow: NSWindow?
     private var namesWindow: NSWindow?
+    private var commandsWindow: NSWindow?
     private var visibleSurfaces = 0
     private var updateTimer: Timer?
     private var controlServer: ControlServer?
@@ -158,6 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-report"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]),
                           AnyView(ReportView(kind: .bug, app: self, model: model) {}.frame(width: 560)))
+        }
+        if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-commands"), flag + 1 < CommandLine.arguments.count {
+            snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]), AnyView(CommandsSnapshot()))
         }
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-herdr"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]), AnyView(HerdrSnapshot()))
@@ -374,7 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                          guard let self else { throw SwitchError.failed("fwd is quitting") }
                                          return try await self.switchBuild(to: target, timeout: timeout)
                                      })
-        let server = ControlServer(path: paths.controlSocket.path) { await handler.handle($0) }
+        let server = ControlServer(path: paths.controlSocket.path, handleFrom: { await handler.handle($0, caller: $1) })
         do {
             try SSHConnection.prepareSocketDir(paths.socketDir)
             try server.start()
@@ -413,9 +417,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         w.makeKeyAndOrderFront(nil)
     }
 
-    /// A log too long for the issue link: saved to a file shown in Finder,
-    /// and copied, so it can be dragged or pasted into the issue.
+    /// Opens the window listing the `fwd` commands run and what ran them.
+    func showCommands() {
+        if commandsWindow == nil {
+            let view = CommandsView(log: model.commands, copy: { [weak self] in self?.copy($0) })
+            let w = NSWindow(contentViewController: NSHostingController(rootView: view))
+            w.title = "Command Line Activity"
+            w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            w.setContentSize(NSSize(width: 580, height: 420))
+            w.isReleasedWhenClosed = false
+            w.center()
+            commandsWindow = w
+        }
+        model.log.write("opened Command Line Activity (\(model.commands.entries.count) rows)")
+        NSApp.activate(ignoringOtherApps: true)
+        commandsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    /// A log too long for the issue link: copied, and saved to a file opened
+    /// in a text editor behind the browser, so it can be pasted into the
+    /// issue's Log field or looked over first.
     func handOver(log: String) {
+        copy(log)
+        let lines = log.split(separator: "\n").count
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-report")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current,
@@ -423,11 +447,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let file = dir.appendingPathComponent("fwd-log-\(stamp).txt")
         do {
             try log.write(to: file, atomically: true, encoding: .utf8)
-            NSWorkspace.shared.activateFileViewerSelecting([file])
         } catch {
-            model.log.write("couldn't save the log for the report: \(error.localizedDescription)")
+            model.log.write("report: copied the log (\(lines) lines) but couldn't save it to a file: \(error.localizedDescription)")
+            return
         }
-        copy(log)
+        // Not activated, so the browser's issue form stays in front.
+        let quiet = NSWorkspace.OpenConfiguration()
+        quiet.activates = false
+        NSWorkspace.shared.open(file, configuration: quiet) { [log = model.log] _, error in
+            if let error {
+                log.write("report: no app opened \(file.lastPathComponent) (\(error.localizedDescription)); showing it in Finder")
+                DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+        }
+        model.log.write("report: the log (\(lines) lines) is too long for the link; copied it and opened \(file.lastPathComponent)")
     }
 
     func copyLogLocation() {

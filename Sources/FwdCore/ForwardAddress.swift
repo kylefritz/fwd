@@ -62,6 +62,8 @@ public struct ForwardAddress: Identifiable, Equatable, Sendable {
             case .idle, .standby, .paused: return .notConnected
             case .connecting, .retrying, .connected: return .connecting
             case .needsAttention(let message): return .needsPerson(message)
+            // No Connect button on its page: only the panel turns a host on.
+            case .off: return .blocked("This host is turned off in fwd. Turn it on under Hidden hosts in the panel.")
             }
         }
     }

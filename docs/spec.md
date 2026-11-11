@@ -1,7 +1,7 @@
 # fwd: a small menu bar port forwarder for macOS
 
-Date: 2026-10-09
-Status: draft for review
+First written 2026-10-09 as the design.
+Status: kept up to date. It describes fwd as of v0.3.1 plus what is on `main`.
 
 ## Purpose
 
@@ -44,15 +44,19 @@ In scope:
   from the ssh config, with their current status.
 - Update check against GitHub releases, with an offer to restart.
 - Launch at login.
-- A terminal command that opens the app.
+- A terminal command, `fwd`, that drives the running app.
+- A button per host that opens it in VS Code over Remote-SSH, with a menu of
+  the folders the host's herdr has open.
+- A preview build for each pull request, and a command to switch to one.
 - Public repository with README, license and tagged releases.
 - Install through Homebrew from the project's own tap.
 
 Out of scope: creating remote forwards, managing the config's own forwards,
 SOCKS proxies, editing `~/.ssh/config`, password or interactive
 authentication inside the app, non-loopback remote targets, treating two host
-aliases as the same machine, Intel Macs, Windows remotes, localization, telemetry of any
-kind, and Developer ID signing or notarization (see Distribution).
+aliases as the same machine, Intel Macs, Windows remotes, localization, any
+usage tracking beyond the ping that counts installs (see Privacy), and
+Developer ID signing or notarization (see Distribution).
 
 ## Port entry syntax
 
@@ -174,8 +178,9 @@ hosts:
   separately in `~/.config/fwd/state.yaml`, so `ports.yaml` stays portable
   between machines. Deleting `state.yaml` is harmless.
 - `~/.config/fwd/config.yaml` holds preferences: `check_for_updates`
-  (default `true`), `send_usage_stats` (default `true`) and `update_channel`
-  (`stable` or `beta`, default `stable`). A missing file means defaults.
+  (default `true`), `send_usage_stats` (default `true`), `update_channel`
+  (`stable` or `beta`, default `stable`) and `herdr` (default `true`; see
+  VS Code and herdr). A missing file means defaults.
 - `state.yaml` also holds `install_id`, a random UUID made on first launch
   for counting installs. It isn't derived from the machine or the user.
 
@@ -271,8 +276,29 @@ Connect button.
   viewer has connected through the forward and then none has for 30 seconds,
   or if none connects within 2 minutes. A kept Screen Sharing entry stays on.
 - A sign-in proxy that opens a browser (cloudflared's "A browser window
-  should have opened at the following URL") is "needs attention" even though
-  ssh then reports a timeout, so retries never open more browser tabs.
+  should have opened at the following URL") gets up to three minutes for the
+  sign-in, and the same ssh connects by itself once it's done. Left
+  unfinished, it is "needs attention" even though ssh then reports a
+  timeout, so retries never open more browser tabs.
+  Sleeping while that browser sign-in is pending ends the same way, instead
+  of starting a second sign-in on wake; a network change leaves the waiting
+  ssh alone. It also leaves alone an ssh started in the last 20 seconds,
+  which may be about to open that browser: the attempt connects or gives up
+  by itself, and the retry loop goes on from there.
+- A host can be turned off whole ("Turn Off and Hide" in its ••• menu). Its
+  connection is dropped and nothing connects it: not your ssh session, a
+  kept entry, a click or the command line, which answers that the host is
+  turned off. The panel lists it under "Hidden hosts" with a "Turn On"
+  button; its entries are kept untouched. The names are in `state.yaml`
+  (`off_hosts`), since fwd writes that file and never the user's two.
+- "Needs attention" is left only by Retry, Connect or `fwd connect`.
+  `fwd <host> <port>` adds the port but doesn't retry such a host, because
+  scripts and agents run it repeatedly and each retry behind a sign-in proxy
+  opens a tab. Nothing connects while the Mac is asleep, whoever asks.
+- When a ProxyCommand dies before ssh gets through it, ssh's last line is
+  "Connection closed by UNKNOWN port 65535". The card shows the proxy's own
+  error from the line before instead, and for "connection reset by peer"
+  says the network may be blocking the proxy.
 - Authentication never prompts (`BatchMode=yes`). Anything that needs a human
   puts the host in "needs attention" and stops retrying: a key not loaded in
   the agent, a password-only host, an unknown or changed host key, an expired
@@ -404,6 +430,51 @@ other order, fwd's entry is bumped to a nearby port as usual.
   state changes. Follows light and dark mode. Every state also has a text or
   shape cue and a VoiceOver label, so nothing depends on color alone.
 
+## VS Code and herdr
+
+- Each host card for a host in the ssh config has a VS Code button next to
+  Screen Sharing. It shows the
+  editor's own icon, gray until hovered, and is absent when neither VS Code
+  nor VS Code Insiders is installed (checked in that order).
+- Opening a host runs the editor's own command line from inside its app
+  bundle (a menu bar app doesn't get the login shell's `PATH`) with
+  `--new-window --remote ssh-remote+<host>`, plus a folder when one was
+  picked. Nothing is forwarded for this: the Remote-SSH extension makes its
+  own ssh connection from the host's name in `~/.ssh/config`.
+- A host name starting with `-` and a folder that isn't a full path are
+  refused, so neither can be read as an option.
+- When fwd reads an ssh config other than the default one, the button is
+  hidden and `fwd code` fails with the reason, because VS Code only reads
+  its own.
+- With `herdr: true` (the default) the click opens a small menu instead:
+  "Open VS Code" for the host with no folder, then what the host's
+  [herdr](https://herdr.dev) has open. It is a popover drawn like a menu, so
+  the herdr part can fill in while it is open and "Open VS Code" never waits
+  on it. With `herdr: false` the click opens VS Code at once.
+- The herdr part lists each agent with a dot (green running, orange waiting
+  on you), its title and the folder it is working in, then "Folders": each
+  repo's main checkout followed by its worktrees with their branches, and
+  any other folder a pane is in. Clicking a row opens that folder. A list
+  taller than 480 points (or 60% of a small screen) scrolls inside the menu.
+- Otherwise the menu says herdr isn't installed on the host, isn't running,
+  or what went wrong.
+- The list comes from `scripts/herdr.sh`, a read-only POSIX script shipped in
+  the bundle's Resources. It is sent base64-encoded and piped into `sh`, so
+  no login shell has to parse it. It looks for `herdr` on the `PATH` and in
+  the usual install folders, takes a snapshot of each running herdr session,
+  lists the git worktrees of each folder a pane is in, and reads Claude
+  Code's own files to find the folder each session last worked in, since an
+  agent that moves into a worktree doesn't move its pane. It prints JSON
+  Lines, which `Herdr.read` decodes, skipping anything else a login script
+  printed.
+- The script runs over fwd's connection to the host when there is one.
+  Otherwise, or if that fails, fwd makes a one-off ssh with an 8 second
+  connect timeout and 20 seconds in all. It doesn't use or leave a control
+  master, and isn't taken for one of your own ssh sessions.
+- Each step is logged with the host: which way it asked, how long it took,
+  what herdr reported, and every failure.
+- CI checks that the script parses under `dash` and reports a missing herdr.
+
 ## Errors
 
 - Invalid entry text: the field shakes and shows a one-line reason; nothing is
@@ -449,8 +520,9 @@ else. The log stays on the machine unless the user puts it in an issue
 - Releases are built by a GitHub Actions workflow on a version tag
   (`vX.Y.Z`): build, bundle, ad-hoc `codesign`, zip, and publish a release
   with one asset, `fwd.zip`. `scripts/bundle.sh` does the bundling and is the
-  same script used locally. `scripts/release.sh <version>` stamps the version
-  and pushes the tag.
+  same script used locally. The tag is pushed by hand, on a commit whose CI
+  passed; `release.yml` publishes the release and updates the Homebrew tap.
+  `AGENTS.md` says how to pick the version number.
 - Building from source needs only Command Line Tools: `make app` produces
   `fwd.app`, `make install` copies it to `/Applications`.
 - Homebrew is the recommended install: `brew install kylefritz/tap/fwd`, from
@@ -538,6 +610,34 @@ Trust: an update is trusted because it came over HTTPS from the project's
 repository, nothing stronger. The README says so. Updates downloaded by the
 app are not quarantined and launch normally.
 
+### Pull request previews
+
+- `preview.yml` builds every push to a pull request and publishes it as a
+  prerelease tagged `pr-<number>`. The release is replaced on each push and
+  deleted when the pull request closes. A pull request from a fork gets no
+  preview, since its token can't publish.
+- The workflow comments on the pull request with the command to try it,
+  editing its earlier comment instead of adding one per push.
+- A preview carries the version of the newest beta of the next patch
+  (`-beta.0` before there is one), and `FwdPreview` in Info.plist holds
+  `PR #<number>`. The footer shows `v<version> · PR #<number>`, and bug
+  reports give it with the version.
+- The updater never offers a preview: `pr-<number>` isn't a version, so the
+  checks skip it. On the beta channel the next beta is newer than a preview
+  and replaces it as usual.
+- `fwd try <number>` switches to a preview; `fwd try beta` and
+  `fwd try stable` go to the newest beta or release, even when that is older
+  than the running copy. The updater fetches the release (by its tag for a
+  pull request), downloads and checks it as it does an update, except that a
+  preview's version isn't compared with its tag, then swaps the bundle and
+  restarts.
+- A switch stops update checks until the restart, and a check already under
+  way drops its result, so neither replaces the build that was asked for.
+- A build that isn't ready within the timeout (60 seconds unless `--timeout`
+  says otherwise) is dropped, so fwd never switches after the command gave
+  up.
+- A Homebrew copy can't switch builds, and says so.
+
 ## Reporting
 
 - **Report a Bug…** and **Request a Feature…** in the ••• menu open a window
@@ -552,9 +652,11 @@ app are not quarantined and launch normally.
   become `[hostname]`, and the user name becomes `user`.
 - **Continue on GitHub** opens the `bug.yml` or `feature.yml` issue form
   with the title, version, macOS version and log filled in. A log that would
-  push the link past 7,500 characters is instead saved to a file shown in
-  Finder and copied, and the log field says to drag or paste it in. Nothing
-  is posted until the user submits the form.
+  push the link past 7,500 characters (GitHub turns down longer links) is
+  instead copied and saved to a file that opens in a text editor behind the
+  browser; the window says so before the click. The form's Log field is left
+  empty, and its description says to paste. Nothing is posted until the user
+  submits the form.
 
 ## Launch at login
 
@@ -567,7 +669,16 @@ Settings show up.
 The `fwd` command drives the running app: `fwd devbox 3000` forwards a port
 and prints its URL, and `status`, `wait`, `off`, `remove`, `keep`, `connect`
 and `screen` do what the panel does. Full design, including the JSON output
-and exit codes: `docs/superpowers/specs/2026-10-16-cli-design.md`.
+and exit codes: [`docs/cli.md`](cli.md).
+
+- `fwd code [host]` opens a VS Code Remote-SSH window on the host, as the
+  card's button does but without the herdr menu. The host must be in the ssh
+  config.
+- `fwd try <pr>|beta|stable` switches the app to a pull request's preview
+  build, or back to the newest beta or release (see Pull request previews).
+- `fwd agents` prints a block of instructions to paste into a coding agent's
+  `CLAUDE.md` or `AGENTS.md`. It needs no running app. The README carries
+  the same text, and a test keeps the two identical.
 
 - `fwd` with no arguments prints the help and touches nothing, so an agent
   trying it gets text, not a window. `fwd open` opens the app's window,
@@ -598,9 +709,10 @@ The suite is automatic: `make test` runs all of it locally, and GitHub Actions
 runs it on every push and pull request. A release tag is only built if it
 passes. No Docker or other external service is needed.
 
-To make that possible the package has two targets: `FwdCore`, a library
-holding everything except the views, and `fwd`, the thin SwiftUI app. Tests
-drive `FwdCore` headless. Three seams exist for testing and are otherwise
+To make that possible the package has three targets, plus the test target:
+`FwdCore`, a library holding everything except the views; `fwd`, the thin
+SwiftUI app; and `fwd-cli`, the terminal command. Tests drive `FwdCore`
+headless. Three seams exist for testing and are otherwise
 invisible: the ssh config path, the `~/.config/fwd` and log locations, and the
 releases URL can each be overridden; retry and poll intervals are injected so
 tests run them in milliseconds; and sleep, wake, network and lid events come through
@@ -663,8 +775,7 @@ the output parses. This covers Linux remotes without building the app there.
 
 - The look of the panel and window. View logic lives in `FwdCore` view models
   and is unit tested; the pixels are checked by eye.
-- Real lid-close and Wi-Fi changes on a laptop, checked by hand before a
-  release using a short checklist in the repository.
+- Real lid-close and Wi-Fi changes on a laptop, checked by hand.
 - The Homebrew formula, checked with `brew install --build-from-source` and
   `brew test` before the tap is updated; the formula's `test` block runs
   `fwd --version`.
@@ -687,10 +798,12 @@ the output parses. This covers Linux remotes without building the app there.
 4. **Launch at login for an ad-hoc signed app**: still unverified. Confirm `SMAppService`
    accepts it. If not, the checkbox is dropped and the README explains adding
    it under Login Items by hand.
-5. **Homebrew formula**: still unverified until the first tagged release
-   exists to build from. Confirm the app builds inside Homebrew's build
-   environment (SwiftPM fetching the Yams dependency there), and that launch
-   at login survives a `brew upgrade`, since the app's real path under the
+5. **Homebrew formula**: partly resolved. Six tagged releases exist (v0.1.0
+   to v0.3.1), the release workflow pushed the formula to the tap for each,
+   and the tap serves v0.3.1. Not confirmed in this document: that the app
+   builds inside Homebrew's build environment (SwiftPM fetching the Yams
+   dependency there). Still unverified: that launch at
+   login survives a `brew upgrade`, since the app's real path under the
    Homebrew prefix includes the version number.
 
 ## Decisions

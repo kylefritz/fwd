@@ -16,7 +16,8 @@ The Worker adds the caller's IP address and country and writes one row to
 the `fwd_pings` Analytics Engine dataset, then answers `204`. It never
 answers with anything the app uses: release information and downloads come
 from GitHub directly, so nothing about updates depends on this Worker.
-`check_for_updates: false` in `~/.config/fwd/config.yaml` stops the pings too.
+`send_usage_stats: false` in `~/.config/fwd/config.yaml` stops the pings and
+keeps update checks; `check_for_updates: false` stops both.
 
 ```sh
 npm install

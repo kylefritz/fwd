@@ -76,6 +76,217 @@ import Testing
         #expect(factory.made[1].stopCount == 1)
     }
 
+    @Test func aSessionThatEndsDuringASignInWaitsForAClick() async throws {
+        // The bug in #18: something kept retrying ssh, and each try made fwd
+        // connect too, opening another sign-in tab every time.
+        let factory = Factory()
+        factory.configure = { $0.waitsForSignIn = true }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000")])
+        await s.setUserSession(true)
+        try await eventually("signing in") { factory.made.first?.waitingForSignIn == true }
+        await s.setUserSession(false)
+        #expect(s.state == .needsAttention(HostSession.signInNeeded))
+
+        await s.setUserSession(true)
+        await s.handle(.networkUp)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "no second sign-in until you click")
+
+        factory.configure = { _ in }
+        await s.connect()
+        try await eventually("a click signs in") { s.state == .connected }
+    }
+
+    @Test func aNetworkChangeDoesNotRestartASignIn() async throws {
+        let factory = Factory()
+        factory.configure = { $0.waitsForSignIn = true }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000")])
+        await s.setUserSession(true)
+        try await eventually("signing in") { factory.made.first?.waitingForSignIn == true }
+        await s.handle(.networkUp)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "the ssh that opened the browser keeps waiting")
+        #expect(factory.made[0].stopCount == 0)
+        await s.shutdown()
+    }
+
+    @Test func theCommandLineDoesNotRestartAHostWaitingForAPerson() async throws {
+        // The bug in #21: something ran `fwd host 7440` again each time it
+        // failed, and every run restarted the sign-in and opened a new tab.
+        let factory = Factory()
+        factory.configure = { $0.startError = .needsAttention("sign in") }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "7440", keep: true)])
+        try await eventually("needs attention") { s.state == .needsAttention("sign in") }
+        for _ in 0..<5 { await s.connect(unattended: true) }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "no new attempt, so no new sign-in tab")
+        #expect(s.state == .needsAttention("sign in"))
+
+        factory.configure = { _ in }
+        await s.connect()
+        try await eventually("Retry and fwd connect still work") { s.state == .connected }
+    }
+
+    @Test func theCommandLineStillConnectsAHostThatIsOnlyWaiting() async throws {
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000")])
+        #expect(s.state == .standby)
+        await s.connect(unattended: true)
+        try await eventually("up") { s.active[3000] != nil }
+    }
+
+    @Test func nothingConnectsWhileTheLaptopIsAsleep() async throws {
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "7440", keep: true)])
+        try await eventually("up") { s.state == .connected }
+        await s.handle(.willSleep)
+        await s.connect(unattended: true)
+        await s.connect()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "a request during sleep must not start ssh")
+        #expect(s.state == .paused("asleep"))
+
+        await s.handle(.didWake)
+        try await eventually("the kept port comes back on wake") { s.state == .connected }
+        #expect(factory.made.count == 2)
+    }
+
+    @Test func sleepingDuringASignInWaitsForAClick() async throws {
+        // #20: the lid shut with a sign-in tab open, and opening it started
+        // a second sign-in.
+        let factory = Factory()
+        factory.configure = { $0.waitsForSignIn = true }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("signing in") { factory.made.first?.waitingForSignIn == true }
+        await s.handle(.willSleep)
+        #expect(s.state == .needsAttention(HostSession.signInNeeded))
+        await s.handle(.didWake)
+        await s.handle(.networkUp)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "no second sign-in until you click")
+
+        factory.configure = { _ in }
+        await s.connect()
+        try await eventually("a click signs in") { s.state == .connected }
+    }
+
+    @Test func losingTheNetworkDoesNotRestartASignIn() async throws {
+        let factory = Factory()
+        factory.configure = { $0.waitsForSignIn = true }
+        let power = FakePower()
+        let s = session(factory, power: power)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("signing in") { factory.made.first?.waitingForSignIn == true }
+        power.networkUp = false
+        await s.handle(.networkDown)
+        power.networkUp = true
+        await s.handle(.networkUp)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(factory.made.count == 1, "the ssh that opened the browser keeps waiting")
+        #expect(factory.made[0].stopCount == 0)
+        await s.shutdown()
+    }
+
+    @Test func aBurstOfNetworkChangesStartsOneConnection() async throws {
+        let factory = Factory()
+        let slowStart = Timing(retrySchedule: [0.05], steadyRetry: 0.1, scanInterval: 0.05, settle: 0.2)
+        let s = HostSession(host: "devbox", makeConnection: factory.make, allocator: PortAllocator(isFree: { _ in true }),
+                            power: FakePower(), timing: slowStart, log: Log(file: tempPaths().logFile))
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("up") { s.state == .connected }
+        await s.handle(.willSleep)
+        await s.handle(.didWake)
+        // A waking laptop reports the network several times in a second.
+        for _ in 0..<4 { await s.handle(.networkUp) }
+        try await eventually("back") { s.state == .connected }
+        #expect(factory.made.count == 2, "one start for the whole burst")
+        await s.shutdown()
+    }
+
+    @Test func aNetworkChangeLetsAnAttemptInFlightFinish() async throws {
+        // An ssh a second old may be about to open a sign-in tab; restarting
+        // it on every network change opened one tab per restart.
+        let factory = Factory()
+        factory.configure = { $0.startDelay = 0.4 }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("an attempt is under way") { factory.made.count == 1 }
+        for _ in 0..<3 { await s.handle(.networkUp) }
+        try await eventually("it connects") { s.state == .connected }
+        #expect(factory.made.count == 1, "the same ssh, not a restarted one")
+        #expect(factory.made[0].stopCount == 0)
+        await s.shutdown()
+    }
+
+    @Test func anAttemptThatHangsTooLongIsRestartedOnANetworkChange() async throws {
+        let factory = Factory()
+        factory.configure = { $0.startDelay = 5 }
+        let hurried = Timing(retrySchedule: [0.05], steadyRetry: 0.1, scanInterval: 0.05, settle: 0.01, attemptGrace: 0.1)
+        let s = HostSession(host: "devbox", makeConnection: factory.make, allocator: PortAllocator(isFree: { _ in true }),
+                            power: FakePower(), timing: hurried, log: Log(file: tempPaths().logFile))
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("an attempt is under way") { factory.made.count == 1 }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        factory.configure = { _ in }
+        await s.handle(.networkUp)
+        try await eventually("a fresh attempt connects") { s.state == .connected }
+        #expect(factory.made.count == 2)
+        #expect(factory.made[0].stopCount >= 1, "the hung ssh was stopped")
+        await s.shutdown()
+    }
+
+    @Test func aHostTurnedOffConnectsForNoReason() async throws {
+        // #18, #20: hosts you don't care about must stay quiet.
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "8765", keep: true)])
+        try await eventually("kept, so up") { s.state == .connected }
+
+        await s.setOff(true)
+        #expect(s.state == .off)
+        #expect(s.active.isEmpty)
+        #expect(factory.made[0].stopCount == 1)
+
+        await s.setUserSession(true)
+        await s.connect()
+        await s.connect(unattended: true)
+        await s.handle(.willSleep)
+        await s.handle(.didWake)
+        await s.handle(.networkUp)
+        await s.setEntries([Entry(port: "8765", keep: true), Entry(port: "3000")])
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(factory.made.count == 1, "no session, kept port, click, wake or edit connects it")
+        #expect(s.state == .off)
+
+        await s.setOff(false)
+        try await eventually("back on: the kept port connects again") { s.state == .connected && s.active.count == 2 }
+        #expect(factory.made.count == 2)
+    }
+
+    @Test func turningOffDuringAReconnectStaysOff() async throws {
+        // A network change was halfway through restarting the connection
+        // (waiting for the old ssh to exit) when the host was turned off.
+        let factory = Factory()
+        factory.configure = { $0.stopDelay = 0.3 }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "8765", keep: true)])
+        try await eventually("up") { s.state == .connected }
+        factory.made[0].alive = false
+        let resuming = Task { await s.handle(.networkUp) }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        await s.setOff(true)
+        await resuming.value
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(s.state == .off)
+        #expect(factory.made.count == 1, "the pending reconnect must not start")
+    }
+
     @Test func aClickedConnectionOutlivesYourSshSession() async throws {
         let factory = Factory()
         let s = session(factory)

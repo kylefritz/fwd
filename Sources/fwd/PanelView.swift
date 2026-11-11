@@ -8,6 +8,8 @@ struct PanelView: View {
     let inWindow: Bool
 
     @State private var filter = ""
+    /// `--show-hidden` opens the list for snapshots.
+    @State private var showHidden = CommandLine.arguments.contains("--show-hidden")
     @State private var actionError: String?
     /// Natural height of the host list, measured so the menu bar panel can
     /// be exactly as tall as what it shows.
@@ -19,9 +21,13 @@ struct PanelView: View {
 
     private var filtered: [HostCard] {
         let needle = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return model.cards }
-        return model.cards.filter { $0.name.lowercased().contains(needle) }
+        let shown = model.cards.filter { !$0.off }
+        guard !needle.isEmpty else { return shown }
+        return shown.filter { $0.name.lowercased().contains(needle) }
     }
+
+    /// Hosts turned off, which fwd won't connect.
+    private var hidden: [HostCard] { model.cards.filter(\.off) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -95,9 +101,10 @@ struct PanelView: View {
                         }
                         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
                     }
-                    if filtered.isEmpty {
+                    if filtered.isEmpty, !filter.trimmingCharacters(in: .whitespaces).isEmpty {
                         Text("No hosts match \"\(filter)\"").foregroundStyle(.secondary).padding()
                     }
+                    if !hidden.isEmpty { hiddenHosts }
                 }
                 .padding(12)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
@@ -107,6 +114,37 @@ struct PanelView: View {
             // collapses, so give it the list's height, up to what the screen allows.
             .frame(height: inWindow ? nil : min(max(listHeight, 44), panelListCap))
         }
+    }
+
+    /// Hosts turned off: out of the way, with the way back.
+    private var hiddenHosts: some View {
+        DisclosureGroup(isExpanded: $showHidden) {
+            VStack(spacing: 0) {
+                ForEach(hidden) { card in
+                    HStack(spacing: 8) {
+                        Image(systemName: "moon.zzz").font(.caption).foregroundStyle(.secondary)
+                            .accessibilityLabel("turned off")
+                        Text(card.name).font(.callout).lineLimit(1).truncationMode(.middle)
+                        if !card.pills.isEmpty {
+                            Text(verbatim: "\(card.pills.count) port\(card.pills.count == 1 ? "" : "s") kept")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Button("Turn On") { Task { await model.setHostOff(host: card.name, off: false) } }
+                            .controlSize(.small)
+                            .help("Show \(card.name) again and let fwd connect to it")
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    if card.id != hidden.last?.id { Divider() }
+                }
+            }
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.top, 4)
+        } label: {
+            Text(verbatim: "Hidden hosts (\(hidden.count))").font(.caption).foregroundStyle(.secondary)
+                .help("Turned off: fwd won't connect to these for any reason")
+        }
+        .padding(.top, 4)
     }
 
     /// Room for the list under the menu bar, after the banners and footer.
@@ -308,6 +346,14 @@ struct CompactHostRow: View {
             }
             PortField(host: card.name, model: model, prompt: "port")
                 .frame(width: 130)
+            Menu {
+                TurnOffHostButton(host: card.name, model: model)
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .foregroundStyle(.secondary)
+            .accessibilityLabel(Text(verbatim: "More for \(card.name)"))
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
@@ -335,7 +381,7 @@ struct FooterView: View {
                     Task { do { try await model.turnAllOff() } catch { report(error) } }
                 }
                 .controlSize(.small)
-                .disabled(!model.cards.contains { $0.pills.contains(where: \.on) })
+                .disabled(!model.cards.contains { !$0.off && $0.pills.contains(where: \.on) })
 
                 Spacer()
                 Text(AppDelegate.displayVersion).font(.caption).foregroundStyle(.secondary)
@@ -353,6 +399,8 @@ struct FooterView: View {
                                 note = "Copied \(model.paths.logFile.path)"
                             }
                         }
+                    Button("Command Line Activity…") { app.showCommands() }
+                        .help("The fwd commands run on this Mac and what ran them")
                     Divider()
                     Button("Report a Bug…") { app.showReport(.bug) }
                     Button("Request a Feature…") { app.showReport(.feature) }

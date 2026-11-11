@@ -94,6 +94,36 @@ import Testing
         #expect(!needsPerson("Use your browser to read the policy. Enter your passphrase carefully.\nConnection timed out during banner exchange"))
     }
 
+    @Test func aProxyThatDiedSaysWhyInsteadOfUnknownPort() {
+        // #13: on a network that blocked cloudflared, the card said only
+        // "Connection closed by UNKNOWN port 65535".
+        let reset = """
+            read tcp 10.0.0.5:56418->198.51.100.7:443: read: connection reset by peer
+            Connection closed by UNKNOWN port 65535
+            """
+        let message = SSHConnection.classify(stderr: reset).message
+        #expect(message == "The ssh proxy connected, then the network reset it. "
+            + "This network may be blocking it; plain ssh will fail too.")
+        if case .unreachable = SSHConnection.classify(stderr: reset) {} else {
+            Issue.record("a blocked proxy is worth retrying: the next network may let it through")
+        }
+
+        let other = """
+            dial tcp: lookup ssh.example.com: no such host
+            kex_exchange_identification: Connection closed by remote host
+            Connection closed by UNKNOWN port 65535
+            """
+        #expect(SSHConnection.classify(stderr: other).message
+            == "The ssh proxy failed: dial tcp: lookup ssh.example.com: no such host")
+
+        #expect(SSHConnection.classify(stderr: "Connection closed by UNKNOWN port 65535").message
+            == "The ssh proxy (ProxyCommand) didn't get a connection through. Plain ssh will fail the same way.")
+        // A host reached directly keeps ssh's own words.
+        #expect(SSHConnection.proxyFailure("Connection closed by 203.0.113.9 port 22") == nil)
+        #expect(SSHConnection.classify(stderr: "ssh: connect to host 10.0.0.1 port 22: Operation timed out").message
+            == "ssh: connect to host 10.0.0.1 port 22: Operation timed out")
+    }
+
     @Test func noToolOrGarbageMeansUnknownNotCrash() {
         #expect(RemoteScanner.parse("#fwd:none\n") == nil)
         // rc chatter with no trailing newline sits in front of the marker.

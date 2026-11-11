@@ -153,14 +153,37 @@ final class FakeConnection: Connection, @unchecked Sendable {
     /// Called inside addForward, before it returns; may throw.
     var onAddForward: ((FakeConnection, Int, Int) throws -> Void)?
     var stopCount = 0
+    /// start() acts like a sign-in proxy that opened a browser: it waits
+    /// until stopped, then fails.
+    var waitsForSignIn = false
+    /// start() takes this long, like an ssh still shaking hands.
+    var startDelay: Double = 0
+    /// stop() takes this long, like ssh being asked to exit.
+    var stopDelay: Double = 0
+    private(set) var waitingForSignIn = false
+    private var stopped = false
 
     func start() async throws {
+        if startDelay > 0 {
+            let until = Date().addingTimeInterval(startDelay)
+            while !stopped, Date() < until { try? await Task.sleep(nanoseconds: 10_000_000) }
+            if stopped { throw ConnectionError.failed("Stopped") }
+        }
         if let startError { throw startError }
+        if waitsForSignIn {
+            waitingForSignIn = true
+            while !stopped { try? await Task.sleep(nanoseconds: 10_000_000) }
+            waitingForSignIn = false
+            throw ConnectionError.needsAttention("sign in")
+        }
         alive = true
     }
     func isAlive() async -> Bool { alive }
     func stop() async {
+        if stopDelay > 0 { try? await Task.sleep(nanoseconds: UInt64(stopDelay * 1_000_000_000)) }
         alive = false
+        stopped = true
+        waitingForSignIn = false
         stopCount += 1
     }
     func addForward(local: Int, remote: Int) async throws {

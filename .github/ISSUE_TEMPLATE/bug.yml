@@ -25,7 +25,9 @@ body:
     attributes:
       label: Log
       description: >
-        From ~/Library/Logs/fwd/fwd.log. **Report a Bug…** in fwd's ••• menu fills
-        this in with tokens, IP addresses and (optionally) host names removed.
+        **Empty? Paste here.** A log too long for the link is on your clipboard:
+        **Report a Bug…** in fwd's ••• menu copied it, with tokens, IP addresses
+        and (optionally) host names removed, and opened it in a text editor.
+        A short one is filled in already. By hand, it's ~/Library/Logs/fwd/fwd.log.
         Issues are public, so check it before submitting.
       render: text

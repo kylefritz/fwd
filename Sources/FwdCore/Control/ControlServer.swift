@@ -6,7 +6,7 @@ import Foundation
 /// socket folder, and only the same user may talk to it.
 public final class ControlServer: @unchecked Sendable {
     public let path: String
-    private let handle: @MainActor (ControlRequest) async -> ControlReply
+    private let handle: @MainActor (ControlRequest, Caller?) async -> ControlReply
     private var listener: Int32 = -1
     private var source: DispatchSourceRead?
     /// A slow client can take up to `readTimeout` to send its request, so
@@ -18,7 +18,13 @@ public final class ControlServer: @unchecked Sendable {
 
     public init(path: String, handle: @escaping @MainActor (ControlRequest) async -> ControlReply) {
         self.path = path
-        self.handle = handle
+        self.handle = { request, _ in await handle(request) }
+    }
+
+    /// Also hands over who ran the command, read from the socket.
+    public init(path: String, handleFrom: @escaping @MainActor (ControlRequest, Caller?) async -> ControlReply) {
+        self.path = path
+        self.handle = handleFrom
     }
 
     public func start() throws {
@@ -60,6 +66,9 @@ public final class ControlServer: @unchecked Sendable {
         }
         UnixSocket.setTimeout(client, Self.readTimeout)
         readers.async { [handle] in
+            // Now, while the command is still running and waiting: once it
+            // has its answer its process is gone, and so is its parentage.
+            let caller = Caller.peer(of: client)
             let request: Result<ControlRequest, ControlError>
             do {
                 guard let line = try UnixSocket.readLine(client, max: Self.maxRequest) else {
@@ -83,7 +92,7 @@ public final class ControlServer: @unchecked Sendable {
             Task { @MainActor in
                 let reply: ControlReply
                 switch request {
-                case .success(let r): reply = await handle(r)
+                case .success(let r): reply = await handle(r, caller)
                 case .failure(let e): reply = .failure(e)
                 }
                 try? UnixSocket.writeAll(client, reply.encodedLine())
