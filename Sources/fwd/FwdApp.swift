@@ -437,6 +437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Opens the window for turning forwards by name on and off.
     func showNames() {
+        closePanel()
         namesWindow?.close()
         let view = NamesView(model: model, open: { [weak self] in self?.open($0) },
                              close: { [weak self] in self?.namesWindow?.close() })
