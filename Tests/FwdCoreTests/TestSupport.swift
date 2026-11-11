@@ -156,10 +156,17 @@ final class FakeConnection: Connection, @unchecked Sendable {
     /// start() acts like a sign-in proxy that opened a browser: it waits
     /// until stopped, then fails.
     var waitsForSignIn = false
+    /// start() takes this long, like an ssh still shaking hands.
+    var startDelay: Double = 0
     private(set) var waitingForSignIn = false
     private var stopped = false
 
     func start() async throws {
+        if startDelay > 0 {
+            let until = Date().addingTimeInterval(startDelay)
+            while !stopped, Date() < until { try? await Task.sleep(nanoseconds: 10_000_000) }
+            if stopped { throw ConnectionError.failed("Stopped") }
+        }
         if let startError { throw startError }
         if waitsForSignIn {
             waitingForSignIn = true

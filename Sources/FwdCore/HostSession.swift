@@ -26,10 +26,15 @@ public struct Timing: Sendable {
     /// viewer: after one has been seen, and if none ever connects.
     public var screenSharingIdle: Double
     public var screenSharingUnused: Double
+    /// How long a connection attempt is left to finish when the network
+    /// changes under it. Longer than ssh takes to give up on a dead network.
+    public var attemptGrace: Double
 
     public init(retrySchedule: [Double] = [2, 5, 15, 30], steadyRetry: Double = 60,
                 scanInterval: Double = 5, settle: Double = 1,
-                screenSharingIdle: Double = 30, screenSharingUnused: Double = 120) {
+                screenSharingIdle: Double = 30, screenSharingUnused: Double = 120,
+                attemptGrace: Double = 20) {
+        self.attemptGrace = attemptGrace
         self.retrySchedule = retrySchedule
         self.steadyRetry = steadyRetry
         self.scanInterval = scanInterval
@@ -79,6 +84,9 @@ public final class HostSession {
     /// You clicked something that connects. Lasts until the link drops, a
     /// first attempt gives up, or the laptop sleeps.
     private var clicked = false
+    /// When the ssh now trying to connect was started; nil when none is.
+    private var attemptStarted: Date?
+    private var saidLettingFinish = false
 
     public init(host: String, makeConnection: @escaping () -> Connection, allocator: PortAllocator,
                 power: PowerEvents, timing: Timing = Timing(), log: Log) {
@@ -282,6 +290,18 @@ public final class HostSession {
         // several network changes within a second, and each one used to
         // throw the start away and schedule it again.
         if running, state == .connecting, connection == nil { return }
+        // An ssh that has just started may be a moment from opening a
+        // sign-in tab, before it has said so. Killing it and starting again
+        // would open two. It connects or gives up by itself, and the retry
+        // loop takes over from there.
+        if state == .connecting, let attemptStarted,
+           Date().timeIntervalSince(attemptStarted) < timing.attemptGrace {
+            if !saidLettingFinish {
+                saidLettingFinish = true
+                log.write("network changed during a connection attempt; letting it finish", host: host)
+            }
+            return
+        }
         log.write("resuming", host: host)
         await halt()
         start(after: timing.settle)
@@ -301,6 +321,7 @@ public final class HostSession {
     private func halt() async {
         generation += 1
         running = false
+        attemptStarted = nil
         napTask?.cancel()
         let old = connection
         connection = nil
@@ -341,9 +362,12 @@ public final class HostSession {
                 Task { @MainActor in self?.linkDied(gen) }
             }
             connection = conn
+            attemptStarted = Date()
+            saidLettingFinish = false
             do {
                 try await conn.start()
             } catch {
+                if gen == generation { attemptStarted = nil }
                 guard gen == generation else {
                     await conn.stop()
                     return
@@ -373,6 +397,7 @@ public final class HostSession {
                 await conn.stop()
                 return
             }
+            attemptStarted = nil
             attempt = 0
             lastError = nil
             linkAlive = true

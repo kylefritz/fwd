@@ -209,6 +209,38 @@ import Testing
         await s.shutdown()
     }
 
+    @Test func aNetworkChangeLetsAnAttemptInFlightFinish() async throws {
+        // An ssh a second old may be about to open a sign-in tab; restarting
+        // it on every network change opened one tab per restart.
+        let factory = Factory()
+        factory.configure = { $0.startDelay = 0.4 }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("an attempt is under way") { factory.made.count == 1 }
+        for _ in 0..<3 { await s.handle(.networkUp) }
+        try await eventually("it connects") { s.state == .connected }
+        #expect(factory.made.count == 1, "the same ssh, not a restarted one")
+        #expect(factory.made[0].stopCount == 0)
+        await s.shutdown()
+    }
+
+    @Test func anAttemptThatHangsTooLongIsRestartedOnANetworkChange() async throws {
+        let factory = Factory()
+        factory.configure = { $0.startDelay = 5 }
+        let hurried = Timing(retrySchedule: [0.05], steadyRetry: 0.1, scanInterval: 0.05, settle: 0.01, attemptGrace: 0.1)
+        let s = HostSession(host: "devbox", makeConnection: factory.make, allocator: PortAllocator(isFree: { _ in true }),
+                            power: FakePower(), timing: hurried, log: Log(file: tempPaths().logFile))
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("an attempt is under way") { factory.made.count == 1 }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        factory.configure = { _ in }
+        await s.handle(.networkUp)
+        try await eventually("a fresh attempt connects") { s.state == .connected }
+        #expect(factory.made.count == 2)
+        #expect(factory.made[0].stopCount >= 1, "the hung ssh was stopped")
+        await s.shutdown()
+    }
+
     @Test func aClickedConnectionOutlivesYourSshSession() async throws {
         let factory = Factory()
         let s = session(factory)
