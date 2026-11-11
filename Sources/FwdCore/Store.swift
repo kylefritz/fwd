@@ -134,6 +134,19 @@ private struct StateFile: Codable {
     /// A random ID for this install, sent with update checks to count
     /// installs. Not derived from anything about the machine or the user.
     var install_id: String?
+    /// Hosts turned off in the panel. Left out when there are none.
+    var off_hosts: [String]?
+
+    init() {}
+
+    /// Every key is optional, so a file missing one (hand-edited, or from
+    /// an older fwd) still gives up the rest.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        assigned = try c.decodeIfPresent([String: Int].self, forKey: .assigned) ?? [:]
+        install_id = try c.decodeIfPresent(String.self, forKey: .install_id)
+        off_hosts = try c.decodeIfPresent([String].self, forKey: .off_hosts)
+    }
 }
 
 /// Reads and writes the YAML files under `~/.config/fwd`.
@@ -200,6 +213,16 @@ public final class Store {
     public func saveSticky(_ assigned: [String: Int]) {
         var state = loadState()
         state.assigned = assigned
+        saveState(state)
+    }
+
+    /// Hosts you turned off. In state.yaml because fwd writes it; ports.yaml
+    /// and config.yaml are yours.
+    public func loadOffHosts() -> Set<String> { Set(loadState().off_hosts ?? []) }
+
+    public func saveOffHosts(_ hosts: Set<String>) {
+        var state = loadState()
+        state.off_hosts = hosts.isEmpty ? nil : hosts.sorted()
         saveState(state)
     }
 

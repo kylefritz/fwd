@@ -70,6 +70,8 @@ public struct HostCard: Identifiable, Equatable, Sendable {
     /// Whether the host's Screen Sharing port is listening, from the last
     /// scan. nil until fwd has scanned it.
     public var screenSharing: Bool? = nil
+    /// Turned off: fwd won't connect it, and the panel lists it under Hidden hosts.
+    public var off = false
     public var id: String { name }
     /// Hosts with nothing to show are listed compactly instead of as a card.
     public var isProminent: Bool { !pills.isEmpty || !configPills.isEmpty }
@@ -83,9 +85,13 @@ public enum OverallState: Equatable, Sendable {
 
 public enum AppModelError: Error, CustomStringConvertible {
     case portsFileBroken
+    case hostOff(String)
 
     public var description: String {
-        "ports.yaml has an error. Fix or delete it, then try again."
+        switch self {
+        case .portsFileBroken: return "ports.yaml has an error. Fix or delete it, then try again."
+        case .hostOff(let host): return "\(host) is turned off. Turn it on under Hidden hosts first."
+        }
     }
 }
 
@@ -116,6 +122,8 @@ public final class AppModel: ObservableObject {
     private let busyPorts: (Int32) async -> Set<Int>
 
     /// Hosts you have your own ssh session to, from the last look.
+    /// Hosts turned off in the panel, kept in state.yaml.
+    private var offHosts: Set<String> = []
     private var openSessions: Set<String> = []
     /// Hosts whose proxied session is too new to count, from the last look.
     private var settlingSessions: Set<String> = []
@@ -178,6 +186,8 @@ public final class AppModel: ObservableObject {
         power.onEvent = { [weak self] event in
             Task { @MainActor in await self?.handle(event) }
         }
+        offHosts = store.loadOffHosts()
+        if !offHosts.isEmpty { log.write("hosts turned off: \(offHosts.sorted().joined(separator: ", "))") }
         reloadSSHConfig()
         openSessions = await userSessions().sessions
         await reloadPorts(initial: true)
@@ -336,6 +346,7 @@ public final class AppModel: ObservableObject {
     /// name was given. `unattended` marks a caller that may be a script (the
     /// command line): it won't restart a host that is waiting for a person.
     public func add(host: String, text: String, unattended: Bool = false) async throws {
+        guard !offHosts.contains(host) else { throw AppModelError.hostOff(host) }
         let (portText, name) = EntryName.split(text)
         let pattern = try PortPattern.parse(portText)
         await syncFromDisk()
@@ -399,7 +410,9 @@ public final class AppModel: ObservableObject {
     public func turnAllOff() async throws {
         await syncFromDisk()
         guard fileError == nil else { throw AppModelError.portsFileBroken }
-        for (host, entries) in file.hosts {
+        // A host that is turned off keeps its ports as they are, for when
+        // it comes back.
+        for (host, entries) in file.hosts where !offHosts.contains(host) {
             var off = entries
             for i in off.indices { off[i].on = false }
             file.hosts[host] = off
@@ -527,6 +540,23 @@ public final class AppModel: ObservableObject {
         return answer.listing
     }
 
+    /// Turns a whole host off, or back on. Off, fwd drops its connection and
+    /// won't connect it for any reason; its ports and their settings stay as
+    /// they are for when it comes back.
+    public func setHostOff(host: String, off: Bool) async {
+        guard off != offHosts.contains(host) else { return }
+        if off { offHosts.insert(host) } else { offHosts.remove(host) }
+        store.saveOffHosts(offHosts)
+        if off { screenSharing[host] = nil }
+        if let session = sessions[host] {
+            await session.setOff(off)
+        } else {
+            // No ports, so no session to say it.
+            log.write(off ? "turned off" : "turned on", host: host)
+        }
+        rebuild()
+    }
+
     /// The Retry and Connect buttons.
     public func connect(host: String) async {
         await sessions[host]?.connect()
@@ -598,6 +628,7 @@ public final class AppModel: ObservableObject {
         for host in Array(file.hosts.keys) {
             guard let entries = file.hosts[host] else { continue }
             let session = session(for: host)
+            await session.setOff(offHosts.contains(host))
             await session.setUserSession(hasUserSession(host))
             await session.setEntries(entries)
         }
@@ -668,7 +699,8 @@ public final class AppModel: ObservableObject {
 
         var built = names.map { name -> HostCard in
             let session = sessions[name]
-            let state = session?.state ?? .idle
+            // A host with no ports has no session to say it's off.
+            let state = offHosts.contains(name) ? HostState.off : (session?.state ?? .idle)
             let pills = Self.displayOrder(file.hosts[name] ?? []).map { pill(for: $0, host: name, session: session) }
             let configPills = Self.configDisplayOrder(configForwards[name] ?? []).map {
                 let key = SSHConfig.ForwardKey(kind: $0.kind, listenPort: $0.listenPort)
@@ -679,7 +711,8 @@ public final class AppModel: ObservableObject {
                             statusLine: statusLine(state, session: session),
                             pills: pills, configPills: configPills,
                             lastError: session?.lastError, inConfig: inConfig.contains(name),
-                            screenSharing: session?.listening.map { $0.contains(ScreenSharing.remotePort) })
+                            screenSharing: session?.listening.map { $0.contains(ScreenSharing.remotePort) },
+                            off: offHosts.contains(name))
         }
         // Hosts in use first, in config order; the stable sort keeps that order.
         built.sort { rank($0) < rank($1) }
@@ -735,6 +768,7 @@ public final class AppModel: ObservableObject {
             return "Reconnecting…" + (session?.lastError.map { " \($0)" } ?? "")
         case .paused(let why): return "Paused (\(why))"
         case .needsAttention(let message): return message
+        case .off: return "Turned off"
         }
     }
 

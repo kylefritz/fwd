@@ -241,6 +241,52 @@ import Testing
         await s.shutdown()
     }
 
+    @Test func aHostTurnedOffConnectsForNoReason() async throws {
+        // #18, #20: hosts you don't care about must stay quiet.
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "8765", keep: true)])
+        try await eventually("kept, so up") { s.state == .connected }
+
+        await s.setOff(true)
+        #expect(s.state == .off)
+        #expect(s.active.isEmpty)
+        #expect(factory.made[0].stopCount == 1)
+
+        await s.setUserSession(true)
+        await s.connect()
+        await s.connect(unattended: true)
+        await s.handle(.willSleep)
+        await s.handle(.didWake)
+        await s.handle(.networkUp)
+        await s.setEntries([Entry(port: "8765", keep: true), Entry(port: "3000")])
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(factory.made.count == 1, "no session, kept port, click, wake or edit connects it")
+        #expect(s.state == .off)
+
+        await s.setOff(false)
+        try await eventually("back on: the kept port connects again") { s.state == .connected && s.active.count == 2 }
+        #expect(factory.made.count == 2)
+    }
+
+    @Test func turningOffDuringAReconnectStaysOff() async throws {
+        // A network change was halfway through restarting the connection
+        // (waiting for the old ssh to exit) when the host was turned off.
+        let factory = Factory()
+        factory.configure = { $0.stopDelay = 0.3 }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "8765", keep: true)])
+        try await eventually("up") { s.state == .connected }
+        factory.made[0].alive = false
+        let resuming = Task { await s.handle(.networkUp) }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        await s.setOff(true)
+        await resuming.value
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(s.state == .off)
+        #expect(factory.made.count == 1, "the pending reconnect must not start")
+    }
+
     @Test func aClickedConnectionOutlivesYourSshSession() async throws {
         let factory = Factory()
         let s = session(factory)

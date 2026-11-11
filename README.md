@@ -201,6 +201,12 @@ Otherwise the card says *Not connected · starts when you ssh in* and offers
 **Connect**. That way fwd never keeps knocking on a machine you've stopped
 using, and never opens a sign-in page behind your back.
 
+To make fwd leave a host alone entirely, choose **Turn Off and Hide** in the
+host's ••• menu. fwd drops its connection and won't connect it for any
+reason: not your ssh sessions, not a kept port, not the `fwd` command. The
+host moves to **Hidden hosts** at the bottom of the panel, with its ports
+kept as they were, and **Turn On** brings it back.
+
 - A dead link is noticed within about 15 seconds. Retries come after 2, 5, 15
   and 30 seconds, then once a minute.
 - Asleep or offline, fwd does nothing at all, and picks up again when the Mac
@@ -221,7 +227,7 @@ Everything lives in plain files, so it's easy to keep in your dotfiles.
 |---|---|
 | `~/.config/fwd/ports.yaml` | Your entries. Edit by hand if you like; changes apply within a second. |
 | `~/.config/fwd/config.yaml` | Preferences: `check_for_updates: false` turns off update checks, `send_usage_stats: false` keeps them but stops the install count, `update_channel: beta` follows every build of `main`, `herdr: false` makes the VS Code button open VS Code at once instead of listing herdr's agents and folders. |
-| `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken. Safe to delete. |
+| `~/.config/fwd/state.yaml` | Laptop ports fwd chose when yours were taken, and the hosts you turned off. Safe to delete: turned-off hosts come back on. |
 | `~/Library/Logs/fwd/fwd.log` | The log. **Show Log** in the ••• menu opens it; hold ⌥ for **Copy Log Location**. |
 
 ```yaml

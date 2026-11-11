@@ -179,6 +179,7 @@ public struct HostInfo: Codable, Equatable, Sendable {
         case .retrying: return "retrying"
         case .paused: return "paused"
         case .needsAttention: return "needs-attention"
+        case .off: return "off"
         }
     }
 }

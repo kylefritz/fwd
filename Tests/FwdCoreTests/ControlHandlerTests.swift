@@ -122,6 +122,30 @@ import Testing
         await rig.model.shutdown()
     }
 
+    @Test func theCommandLineLeavesAHostThatIsTurnedOffAlone() async throws {
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        let h = handler(rig)
+        await rig.model.setHostOff(host: "devbox", off: true)
+        for request in [ControlRequest(cmd: "forward", args: ["devbox", "3000"], timeout: 2),
+                        ControlRequest(cmd: "connect", args: ["devbox"], timeout: 2),
+                        ControlRequest(cmd: "screen", args: ["devbox"])] {
+            let reply = await h.handle(request)
+            #expect(reply.exitCode == .failed, "\(request.cmd)")
+            #expect(reply.error == "devbox is turned off in fwd; turn it on under Hidden hosts in the panel", "\(request.cmd)")
+        }
+        #expect(rig.box.made["devbox"] == nil)
+        #expect(rig.card("devbox")?.pills.isEmpty == true, "nothing was added")
+        rig.model.log.flush()
+        let log = try String(contentsOf: rig.model.paths.logFile, encoding: .utf8)
+        for cmd in ["forward", "connect", "screen"] {
+            #expect(log.contains("[devbox] cli: refused \(cmd): this host is turned off"), "\(cmd)")
+        }
+        let status = await h.handle(ControlRequest(cmd: "status", args: ["devbox"]))
+        #expect(status.hosts?.first?.host == "devbox")
+        await rig.model.shutdown()
+    }
+
     @Test func aClickedHostIsNotReportedAsStandbyBeforeItStarts() async throws {
         // Cards rebuild a run-loop turn after a click; the reply must not
         // read the card from before the session started connecting.

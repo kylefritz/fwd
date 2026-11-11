@@ -285,6 +285,12 @@ Connect button.
   ssh alone. It also leaves alone an ssh started in the last 20 seconds,
   which may be about to open that browser: the attempt connects or gives up
   by itself, and the retry loop goes on from there.
+- A host can be turned off whole ("Turn Off and Hide" in its ••• menu). Its
+  connection is dropped and nothing connects it: not your ssh session, a
+  kept entry, a click or the command line, which answers that the host is
+  turned off. The panel lists it under "Hidden hosts" with a "Turn On"
+  button; its entries are kept untouched. The names are in `state.yaml`
+  (`off_hosts`), since fwd writes that file and never the user's two.
 - "Needs attention" is left only by Retry, Connect or `fwd connect`.
   `fwd <host> <port>` adds the port but doesn't retry such a host, because
   scripts and agents run it repeatedly and each retry behind a sign-in proxy
