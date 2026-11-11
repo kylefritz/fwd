@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var window: NSWindow?
     private var reportWindow: NSWindow?
+    private var commandsWindow: NSWindow?
     private var visibleSurfaces = 0
     private var updateTimer: Timer?
     private var controlServer: ControlServer?
@@ -157,6 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-report"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]),
                           AnyView(ReportView(kind: .bug, app: self, model: model) {}.frame(width: 560)))
+        }
+        if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-commands"), flag + 1 < CommandLine.arguments.count {
+            snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]), AnyView(CommandsSnapshot()))
         }
         if let flag = CommandLine.arguments.firstIndex(of: "--snapshot-herdr"), flag + 1 < CommandLine.arguments.count {
             snapshotPanel(to: URL(fileURLWithPath: CommandLine.arguments[flag + 1]), AnyView(HerdrSnapshot()))
@@ -370,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                          guard let self else { throw SwitchError.failed("fwd is quitting") }
                                          return try await self.switchBuild(to: target, timeout: timeout)
                                      })
-        let server = ControlServer(path: paths.controlSocket.path) { await handler.handle($0) }
+        let server = ControlServer(path: paths.controlSocket.path, handleFrom: { await handler.handle($0, caller: $1) })
         do {
             try SSHConnection.prepareSocketDir(paths.socketDir)
             try server.start()
@@ -392,6 +396,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         reportWindow = w
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
+    }
+
+    /// Opens the window listing the `fwd` commands run and what ran them.
+    func showCommands() {
+        if commandsWindow == nil {
+            let view = CommandsView(log: model.commands, copy: { [weak self] in self?.copy($0) })
+            let w = NSWindow(contentViewController: NSHostingController(rootView: view))
+            w.title = "Command Line Activity"
+            w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            w.setContentSize(NSSize(width: 580, height: 420))
+            w.isReleasedWhenClosed = false
+            w.center()
+            commandsWindow = w
+        }
+        model.log.write("opened Command Line Activity (\(model.commands.entries.count) rows)")
+        NSApp.activate(ignoringOtherApps: true)
+        commandsWindow?.makeKeyAndOrderFront(nil)
     }
 
     /// A log too long for the issue link: copied, and saved to a file opened

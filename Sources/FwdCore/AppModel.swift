@@ -105,6 +105,8 @@ public final class AppModel: ObservableObject {
     public let log: Log
     public let store: Store
     public let allocator: PortAllocator
+    /// The `fwd` commands run since launch and who ran them.
+    public let commands = CommandLog()
 
     private let power: PowerEvents
     private let timing: Timing

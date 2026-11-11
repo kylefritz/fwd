@@ -44,6 +44,44 @@ public enum IssueReport {
         return kept.joined(separator: "\n").trimmingCharacters(in: .newlines)
     }
 
+    /// Folds a run of lines that say the same thing into its first line,
+    /// marked with how many there were and when the last one came:
+    /// `… event: networkUp  [×8, last 11:03:56]`. A waking laptop writes the
+    /// same line many times, and a shorter log is likelier to fit in the
+    /// issue link.
+    public static func collapse(_ log: String) -> String {
+        // "2026-11-09T11:03:56.448-05:00 message" -> (time of day, message)
+        func parts(_ line: Substring) -> (time: Substring, message: Substring)? {
+            guard let space = line.firstIndex(of: " "), let t = line[..<space].firstIndex(of: "T") else { return nil }
+            let clock = line[line.index(after: t)..<space].prefix(8)
+            guard clock.count == 8 else { return nil }
+            return (clock, line[line.index(after: space)...])
+        }
+        var out: [String] = []
+        var first: Substring?
+        var message: Substring?
+        var lastTime: Substring = ""
+        var count = 0
+        func flush() {
+            guard let first else { return }
+            out.append(count > 1 ? "\(first)  [×\(count), last \(lastTime)]" : String(first))
+        }
+        for line in log.split(separator: "\n", omittingEmptySubsequences: false) {
+            if let (time, text) = parts(line), text == message {
+                count += 1
+                lastTime = time
+                continue
+            }
+            flush()
+            first = line
+            message = parts(line)?.message
+            lastTime = parts(line)?.time ?? ""
+            count = 1
+        }
+        flush()
+        return out.joined(separator: "\n")
+    }
+
     /// Removes what shouldn't be public: URL queries (sign-in tokens live
     /// there), `key=value` secrets, IP addresses, and the home folder and
     /// user name. With `hideHosts`, ssh host aliases become `host1`, `host2`

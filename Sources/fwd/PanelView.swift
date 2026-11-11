@@ -349,6 +349,8 @@ struct FooterView: View {
                                 note = "Copied \(model.paths.logFile.path)"
                             }
                         }
+                    Button("Command Line Activity…") { app.showCommands() }
+                        .help("The fwd commands run on this Mac and what ran them")
                     Divider()
                     Button("Report a Bug…") { app.showReport(.bug) }
                     Button("Request a Feature…") { app.showReport(.feature) }

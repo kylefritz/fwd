@@ -95,8 +95,11 @@ struct ReportView: View {
         }
         let log = IssueReport.readLog(model.paths.logFile)
         let excerpt = IssueReport.excerpt(log, since: Date().addingTimeInterval(-seconds))
-        preview = IssueReport.redact(excerpt, hosts: model.cards.map(\.name), hideHosts: hideHosts,
-                                     home: NSHomeDirectory(), user: NSUserName())
+        // Folded after redacting, so lines that differ only in what was
+        // removed (an address, a token) fold too.
+        preview = IssueReport.collapse(
+            IssueReport.redact(excerpt, hosts: model.cards.map(\.name), hideHosts: hideHosts,
+                               home: NSHomeDirectory(), user: NSUserName()))
     }
 
     /// The log as it would be shared, if any.
