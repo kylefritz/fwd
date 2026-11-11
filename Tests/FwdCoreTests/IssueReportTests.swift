@@ -45,6 +45,30 @@ import Testing
         #expect(text.components(separatedBy: "[host1]").count == 3)
     }
 
+    @Test func repeatedLinesFoldIntoOne() {
+        let noisy = """
+            2026-11-09T11:02:34.990-05:00 event: networkUp
+            2026-11-09T11:02:37.108-05:00 event: networkUp
+            2026-11-09T11:03:56.448-05:00 event: networkUp
+            2026-11-09T11:16:07.857-05:00 [host1] remote listeners changed: -32771
+            2026-11-09T11:32:11.632-05:00 event: networkUp
+              a line with no timestamp
+              a line with no timestamp
+            2026-11-09T11:33:17.760-05:00 [host1] resuming
+            2026-11-09T11:33:17.900-05:00 [host2] resuming
+            """
+        #expect(IssueReport.collapse(noisy) == """
+            2026-11-09T11:02:34.990-05:00 event: networkUp  [×3, last 11:03:56]
+            2026-11-09T11:16:07.857-05:00 [host1] remote listeners changed: -32771
+            2026-11-09T11:32:11.632-05:00 event: networkUp
+              a line with no timestamp
+              a line with no timestamp
+            2026-11-09T11:33:17.760-05:00 [host1] resuming
+            2026-11-09T11:33:17.900-05:00 [host2] resuming
+            """)
+        #expect(IssueReport.collapse("") == "")
+    }
+
     @Test func aShortLogGoesInTheIssueAndALongOneDoesNot() throws {
         let short = IssueReport.issue(kind: .bug, title: "Retries forever", version: "0.1.0", macOS: "26.1.0", log: "a line")
         #expect(short.logInline)

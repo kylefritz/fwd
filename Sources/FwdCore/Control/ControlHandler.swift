@@ -23,9 +23,18 @@ public final class ControlHandler {
         self.pollInterval = pollInterval
     }
 
-    public func handle(_ request: ControlRequest) async -> ControlReply {
+    /// `caller` is who ran the command, when the socket could say.
+    public func handle(_ request: ControlRequest, caller: Caller? = nil) async -> ControlReply {
         guard request.v == ControlRequest.version else { return .failure(.versionMismatch) }
-        model.log.write("cli: \(([request.cmd] + request.args).joined(separator: " "))")
+        let command = ([request.cmd] + request.args).joined(separator: " ")
+        // Program names only: a full command line can hold a token.
+        model.log.write("cli: \(command)" + (caller.map { " (from \($0.summary))" } ?? ""))
+        let entry = model.commands.record(command: command, caller: caller)
+        if entry.count == CommandLog.loopAt {
+            let minutes = max(1, Int(entry.last.timeIntervalSince(entry.first) / 60))
+            model.log.write("cli: that's \(entry.count) runs of \"\(command)\" in \(minutes) min from "
+                            + "\(caller?.summary ?? "an unknown caller"); Command Line Activity in the ••• menu shows what runs it")
+        }
         do {
             switch request.cmd {
             case "status": return try status(request)

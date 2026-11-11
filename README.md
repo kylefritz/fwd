@@ -178,6 +178,12 @@ run here (a browser, curl, tests) needs a server on a remote host.
 - `fwd --help` lists everything.
 ```
 
+To see what has been running `fwd`, choose **Command Line Activity…** in the
+••• menu. It lists each command with how often it ran and the programs that
+ran it, so a script or agent stuck in a loop is one row with a high count.
+The log names the caller too: `cli: forward devbox 3000 (from zsh ← node ←
+launchd)`.
+
 The command starts fwd if it isn't running. Homebrew installs it; otherwise
 choose **Install Terminal Command** in the ••• menu.
 
