@@ -136,6 +136,11 @@ import Testing
         }
         #expect(rig.box.made["devbox"] == nil)
         #expect(rig.card("devbox")?.pills.isEmpty == true, "nothing was added")
+        rig.model.log.flush()
+        let log = try String(contentsOf: rig.model.paths.logFile, encoding: .utf8)
+        for cmd in ["forward", "connect", "screen"] {
+            #expect(log.contains("[devbox] cli: refused \(cmd): this host is turned off"), "\(cmd)")
+        }
         let status = await h.handle(ControlRequest(cmd: "status", args: ["devbox"]))
         #expect(status.hosts?.first?.host == "devbox")
         await rig.model.shutdown()

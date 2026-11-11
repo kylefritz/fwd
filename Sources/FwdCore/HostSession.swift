@@ -341,6 +341,12 @@ public final class HostSession {
     }
 
     private func start(after delay: Double = 0) {
+        // A caller that was waiting on halt() may get here after the host
+        // was turned off in the meantime.
+        guard !off else {
+            log.write("turned off while a reconnect was pending; not connecting", host: host)
+            return
+        }
         generation += 1
         running = true
         // Right away, so nobody sees the old state while the task spins up.

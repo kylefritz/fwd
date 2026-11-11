@@ -410,7 +410,9 @@ public final class AppModel: ObservableObject {
     public func turnAllOff() async throws {
         await syncFromDisk()
         guard fileError == nil else { throw AppModelError.portsFileBroken }
-        for (host, entries) in file.hosts {
+        // A host that is turned off keeps its ports as they are, for when
+        // it comes back.
+        for (host, entries) in file.hosts where !offHosts.contains(host) {
             var off = entries
             for i in off.indices { off[i].on = false }
             file.hosts[host] = off

@@ -359,6 +359,12 @@ import Testing
         await rig.model.setHostOff(host: "homelab", off: true)
         #expect(Store(paths: rig.model.paths).loadOffHosts() == ["devbox", "homelab"])
 
+        // Turn all off is about the hosts you can see.
+        try await rig.model.add(host: "staging", text: "8080")
+        try await rig.model.turnAllOff()
+        #expect(rig.pill("staging", "8080")?.on == false)
+        #expect(rig.pill("devbox", "3000")?.on == true, "a hidden host's ports stay as they were")
+
         // Your own ssh session doesn't bring it back.
         rig.box.sessions = ["devbox"]
         await rig.model.refreshUserSessions()

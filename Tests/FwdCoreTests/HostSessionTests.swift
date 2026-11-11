@@ -269,6 +269,24 @@ import Testing
         #expect(factory.made.count == 2)
     }
 
+    @Test func turningOffDuringAReconnectStaysOff() async throws {
+        // A network change was halfway through restarting the connection
+        // (waiting for the old ssh to exit) when the host was turned off.
+        let factory = Factory()
+        factory.configure = { $0.stopDelay = 0.3 }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "8765", keep: true)])
+        try await eventually("up") { s.state == .connected }
+        factory.made[0].alive = false
+        let resuming = Task { await s.handle(.networkUp) }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        await s.setOff(true)
+        await resuming.value
+        try await Task.sleep(nanoseconds: 300_000_000)
+        #expect(s.state == .off)
+        #expect(factory.made.count == 1, "the pending reconnect must not start")
+    }
+
     @Test func aClickedConnectionOutlivesYourSshSession() async throws {
         let factory = Factory()
         let s = session(factory)

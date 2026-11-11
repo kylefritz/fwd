@@ -158,6 +158,8 @@ final class FakeConnection: Connection, @unchecked Sendable {
     var waitsForSignIn = false
     /// start() takes this long, like an ssh still shaking hands.
     var startDelay: Double = 0
+    /// stop() takes this long, like ssh being asked to exit.
+    var stopDelay: Double = 0
     private(set) var waitingForSignIn = false
     private var stopped = false
 
@@ -178,6 +180,7 @@ final class FakeConnection: Connection, @unchecked Sendable {
     }
     func isAlive() async -> Bool { alive }
     func stop() async {
+        if stopDelay > 0 { try? await Task.sleep(nanoseconds: UInt64(stopDelay * 1_000_000_000)) }
         alive = false
         stopped = true
         waitingForSignIn = false
