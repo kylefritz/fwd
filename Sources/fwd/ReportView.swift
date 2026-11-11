@@ -64,6 +64,12 @@ struct ReportView: View {
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
                 Text("\(preview.isEmpty ? 0 : preview.split(separator: "\n").count) lines. Sign-in tokens, passwords, IP addresses and your home folder are always removed.")
                     .font(.caption).foregroundStyle(.secondary)
+                if !draft.logInline {
+                    Label("Too long to send along in the link. fwd will copy this log and open it in a text editor: paste it into the issue's Log field.",
+                          systemImage: "doc.on.clipboard")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Text("This opens a public issue on github.com with this filled in. Nothing is sent until you submit it there.")
@@ -93,10 +99,19 @@ struct ReportView: View {
                                      home: NSHomeDirectory(), user: NSUserName())
     }
 
+    /// The log as it would be shared, if any.
+    private var sharedLog: String? { includesLog && !preview.isEmpty ? preview : nil }
+
+    /// The issue as it stands now. Whether the log fits in its link depends
+    /// on the title too, so this is worked out again as you type.
+    private var draft: IssueReport.Issue {
+        IssueReport.issue(kind: kind, title: title, version: AppDelegate.reportVersion,
+                          macOS: Updater.systemVersion, log: sharedLog)
+    }
+
     private func submit() {
-        let log = includesLog && !preview.isEmpty ? preview : nil
-        let issue = IssueReport.issue(kind: kind, title: title, version: AppDelegate.reportVersion,
-                                      macOS: Updater.systemVersion, log: log)
+        let log = sharedLog
+        let issue = draft
         if let log, !issue.logInline { app.handOver(log: log) }
         app.open(issue.url)
         model.log.write("opened a \(kind == .bug ? "bug report" : "feature request") on GitHub")

@@ -137,6 +137,9 @@ public enum CLIArguments {
         - The host can be left out when exactly one host is connected.
         - Exit codes: 0 done, 1 couldn't (read `error`), 2 bad usage, 3 the fwd
           app isn't reachable, 4 timed out.
+        - An `error` saying a host "needs you" means it is waiting for a person (a
+          browser sign-in, a key). Tell them and stop: running the command again
+          won't connect it.
         - Don't add `--keep` unless asked: it keeps the host connected after
           the session that started it ends.
         - `fwd --help` lists everything.

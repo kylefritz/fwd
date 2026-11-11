@@ -229,7 +229,7 @@ final class TestHTTPServer: @unchecked Sendable {
         #expect(try channel("update_channel: beta\n") == .beta)
         #expect(try channel("check_for_updates: true\n") == .stable)
         #expect(try channel("update_channel: nightly\n") == .stable, "an unknown channel falls back to stable")
-        #expect(try store.loadPreferences().sendUsageStats == true, "on unless turned off")
+        #expect(store.loadPreferences().sendUsageStats == true, "on unless turned off")
         try "send_usage_stats: false\n".write(to: store.paths.preferencesFile, atomically: true, encoding: .utf8)
         #expect(store.loadPreferences().sendUsageStats == false)
         #expect(store.loadPreferences().checkForUpdates == true)

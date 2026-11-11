@@ -394,9 +394,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         w.makeKeyAndOrderFront(nil)
     }
 
-    /// A log too long for the issue link: saved to a file shown in Finder,
-    /// and copied, so it can be dragged or pasted into the issue.
+    /// A log too long for the issue link: copied, and saved to a file opened
+    /// in a text editor behind the browser, so it can be pasted into the
+    /// issue's Log field or looked over first.
     func handOver(log: String) {
+        copy(log)
+        let lines = log.split(separator: "\n").count
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-report")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current,
@@ -404,11 +407,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let file = dir.appendingPathComponent("fwd-log-\(stamp).txt")
         do {
             try log.write(to: file, atomically: true, encoding: .utf8)
-            NSWorkspace.shared.activateFileViewerSelecting([file])
         } catch {
-            model.log.write("couldn't save the log for the report: \(error.localizedDescription)")
+            model.log.write("report: copied the log (\(lines) lines) but couldn't save it to a file: \(error.localizedDescription)")
+            return
         }
-        copy(log)
+        // Not activated, so the browser's issue form stays in front.
+        let quiet = NSWorkspace.OpenConfiguration()
+        quiet.activates = false
+        NSWorkspace.shared.open(file, configuration: quiet) { [log = model.log] _, error in
+            if let error {
+                log.write("report: no app opened \(file.lastPathComponent) (\(error.localizedDescription)); showing it in Finder")
+                DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+        }
+        model.log.write("report: the log (\(lines) lines) is too long for the link; copied it and opened \(file.lastPathComponent)")
     }
 
     func copyLogLocation() {

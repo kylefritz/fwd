@@ -125,7 +125,9 @@ public final class ControlHandler {
     private func forward(_ request: ControlRequest) async throws -> ControlReply {
         let target = try target(request, needsPorts: true)
         for port in target.ports {
-            try await model.add(host: target.host, text: port)
+            // Scripts and agents run this again and again, so it must not
+            // restart a host that is waiting for a sign-in; `fwd connect` does.
+            try await model.add(host: target.host, text: port, unattended: true)
             if request.keep, let text = ControlTarget.canonical(port) {
                 try await model.setKeep(host: target.host, text: text, keep: true)
             }

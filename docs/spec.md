@@ -271,8 +271,21 @@ Connect button.
   viewer has connected through the forward and then none has for 30 seconds,
   or if none connects within 2 minutes. A kept Screen Sharing entry stays on.
 - A sign-in proxy that opens a browser (cloudflared's "A browser window
-  should have opened at the following URL") is "needs attention" even though
-  ssh then reports a timeout, so retries never open more browser tabs.
+  should have opened at the following URL") gets up to three minutes for the
+  sign-in, and the same ssh connects by itself once it's done. Left
+  unfinished, it is "needs attention" even though ssh then reports a
+  timeout, so retries never open more browser tabs.
+  Sleeping while that browser sign-in is pending ends the same way, instead
+  of starting a second sign-in on wake; a network change leaves the waiting
+  ssh alone.
+- "Needs attention" is left only by Retry, Connect or `fwd connect`.
+  `fwd <host> <port>` adds the port but doesn't retry such a host, because
+  scripts and agents run it repeatedly and each retry behind a sign-in proxy
+  opens a tab. Nothing connects while the Mac is asleep, whoever asks.
+- When a ProxyCommand dies before ssh gets through it, ssh's last line is
+  "Connection closed by UNKNOWN port 65535". The card shows the proxy's own
+  error from the line before instead, and for "connection reset by peer"
+  says the network may be blocking the proxy.
 - Authentication never prompts (`BatchMode=yes`). Anything that needs a human
   puts the host in "needs attention" and stops retrying: a key not loaded in
   the agent, a password-only host, an unknown or changed host key, an expired
@@ -552,9 +565,11 @@ app are not quarantined and launch normally.
   become `[hostname]`, and the user name becomes `user`.
 - **Continue on GitHub** opens the `bug.yml` or `feature.yml` issue form
   with the title, version, macOS version and log filled in. A log that would
-  push the link past 7,500 characters is instead saved to a file shown in
-  Finder and copied, and the log field says to drag or paste it in. Nothing
-  is posted until the user submits the form.
+  push the link past 7,500 characters (GitHub turns down longer links) is
+  instead copied and saved to a file that opens in a text editor behind the
+  browser; the window says so before the click. The form's Log field is left
+  empty, and its description says to paste. Nothing is posted until the user
+  submits the form.
 
 ## Launch at login
 

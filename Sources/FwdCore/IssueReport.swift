@@ -80,8 +80,8 @@ public enum IssueReport {
 
     public struct Issue: Sendable {
         public let url: URL
-        /// False when the log was too long for the link; the person then
-        /// adds it to the issue themselves.
+        /// False when the log was too long for the link. The link then
+        /// leaves the Log field empty and the person pastes the log in.
         public let logInline: Bool
     }
 
@@ -99,7 +99,9 @@ public enum IssueReport {
         guard let log, !log.isEmpty else { return Issue(url: link(base), logInline: true) }
         let withLog = link(base + [("log", log)])
         if withLog.absoluteString.count <= maxURLLength { return Issue(url: withLog, logInline: true) }
-        let note = "The log was too long to include here. Drag in the file fwd showed in Finder, or paste it: it's on your clipboard."
-        return Issue(url: link(base + [("log", note)]), logInline: false)
+        // An hour of log rarely fits in a link. The field is left empty for
+        // the log to be pasted into: a note there would have to be deleted
+        // first, and the paste then tended to land in another field (#21).
+        return Issue(url: link(base), logInline: false)
     }
 }

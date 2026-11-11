@@ -62,6 +62,10 @@ import Testing
                                      log: String(repeating: "2026-10-15T11:30:00.000-04:00 [host1] retrying\n", count: 400))
         #expect(!long.logInline)
         #expect(long.url.absoluteString.count < 8000)
+        // The Log field is left empty to paste into, not filled with a note
+        // that has to be deleted first.
+        #expect(!long.url.absoluteString.contains("log="))
+        #expect(long.url.absoluteString.contains("version=0.1.0"))
 
         let feature = IssueReport.issue(kind: .feature, title: "Groups", version: "0.1.0", macOS: "26.1.0", log: nil)
         #expect(feature.url.absoluteString.contains("template=feature.yml"))
