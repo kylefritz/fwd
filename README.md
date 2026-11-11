@@ -170,6 +170,9 @@ run here (a browser, curl, tests) needs a server on a remote host.
 - The host can be left out when exactly one host is connected.
 - Exit codes: 0 done, 1 couldn't (read `error`), 2 bad usage, 3 the fwd
   app isn't reachable, 4 timed out.
+- An `error` saying a host "needs you" means it is waiting for a person (a
+  browser sign-in, a key). Tell them and stop: running the command again
+  won't connect it.
 - Don't add `--keep` unless asked: it keeps the host connected after
   the session that started it ends.
 - `fwd --help` lists everything.
@@ -200,7 +203,9 @@ using, and never opens a sign-in page behind your back.
   minutes for you to sign in and then connects by itself.
 - When ssh needs a person (key not loaded, unknown host key, a browser
   sign-in left unfinished), fwd stops and shows **Retry** and **Open in
-  Terminal**.
+  Terminal**. Only **Retry** or `fwd connect <host>` tries again: running
+  `fwd <host> <port>` once more doesn't, so a script can't open a sign-in
+  page each time it runs.
 
 ## Configuration
 
@@ -274,7 +279,8 @@ the original port again.
 Choose **Report a Bug…** in the ••• menu. Pick how much of the log to
 include, check the preview, and fwd opens a prefilled GitHub issue. Sign-in
 tokens, IP addresses and your home folder are always removed, and host
-names can be. `tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing
+names can be. A log too long for the link is copied and opened in a text
+editor, for you to paste into the issue's Log field. `tail -f ~/Library/Logs/fwd/fwd.log` shows what fwd is doing
 as it happens.
 
 </details>

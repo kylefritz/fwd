@@ -4,5 +4,7 @@
 .DS_Store
 .swiftpm/
 build/
+# Browser automation logs and screenshots from agent sessions.
+.playwright-mcp/
 # Local secrets (direnv); never commit.
 .envrc

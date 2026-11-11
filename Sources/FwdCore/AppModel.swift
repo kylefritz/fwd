@@ -331,8 +331,9 @@ public final class AppModel: ObservableObject {
 
     /// Adds `text` (a port pattern, optionally followed by a name) and turns
     /// it on. An entry that's already there is turned on, and renamed if a
-    /// name was given.
-    public func add(host: String, text: String) async throws {
+    /// name was given. `unattended` marks a caller that may be a script (the
+    /// command line): it won't restart a host that is waiting for a person.
+    public func add(host: String, text: String, unattended: Bool = false) async throws {
         let (portText, name) = EntryName.split(text)
         let pattern = try PortPattern.parse(portText)
         await syncFromDisk()
@@ -344,7 +345,7 @@ public final class AppModel: ObservableObject {
             entries.append(Entry(port: pattern.text, on: true, name: name))
         }
         try await update(host: host, entries: entries)
-        await sessions[host]?.connect()
+        await sessions[host]?.connect(unattended: unattended)
     }
 
     /// Sets or clears (with an empty string) an entry's name.
@@ -640,7 +641,7 @@ public final class AppModel: ObservableObject {
         var nowBusy: [String: Set<Int>] = [:]
         for (host, session) in sessions where session.state == .connected {
             if let pid = session.masterPID, !session.active.isEmpty {
-                nowBusy[host] = await TrafficSampler.busyPorts(masterPID: pid)
+                nowBusy[host] = await busyPorts(pid)
             }
         }
         busy = nowBusy

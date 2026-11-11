@@ -7,7 +7,9 @@ function update_fwd --description 'Build fwd on the dev box and install it on th
 
     echo "→ building on $host"
     ssh $host "cd $repo && make app" | tail -1
-    or begin
+    # ssh's status, not tail's: `or` would test tail, which always succeeds,
+    # and a failed build would install the zip left by the last good one.
+    if test $pipestatus[1] -ne 0
         echo "build failed on $host" >&2
         return 1
     end

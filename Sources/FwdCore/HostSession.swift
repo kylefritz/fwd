@@ -139,8 +139,25 @@ public final class HostSession {
 
     /// Connects now because you clicked: turned a port on, Screen Sharing,
     /// Connect or Retry. Leaves a working connection alone.
-    public func connect() async {
+    ///
+    /// `unattended` is for a caller that may have no person behind it: the
+    /// command line's `fwd <host> <port>`, which scripts and agents run over
+    /// and over. It never restarts a host that is waiting for a person,
+    /// since each restart of a host behind a sign-in proxy opens another
+    /// browser tab (#21).
+    public func connect(unattended: Bool = false) async {
         guard !patterns.isEmpty else { return }
+        if unattended, case .needsAttention = state {
+            log.write("the command line asked to connect, but this host is waiting for you; "
+                      + "not retrying until you click Retry or run fwd connect", host: host)
+            return
+        }
+        // Nobody clicks a sleeping laptop, and a sign-in tab opened now
+        // would sit there unseen until its ssh gave up.
+        if asleep {
+            log.write("asked to connect while the laptop is asleep; not connecting", host: host)
+            return
+        }
         clicked = true
         if running, state == .connected || state == .connecting || state == .retrying { return }
         log.write("connecting (clicked)", host: host)
@@ -205,12 +222,27 @@ public final class HostSession {
             // Waiting for a person stays that way, or waking would retry.
             if case .needsAttention = state { return }
             guard !patterns.isEmpty, running || state != .standby else { return }
+            let wasSigningIn = connection?.waitingForSignIn == true
             log.write("sleeping; pausing", host: host)
             await halt()
+            if wasSigningIn {
+                // Waking would connect again and open a second sign-in tab
+                // next to the one already waiting (#20).
+                log.write("slept while waiting for a browser sign-in; "
+                          + "won't start another until you click Retry", host: host)
+                return set(.needsAttention(Self.signInNeeded))
+            }
             set(.paused("asleep"))
         case .networkDown:
             guard wantsConnection, !asleep else { return }
             if case .needsAttention = state { return }
+            // Pausing would kill the ssh that opened the browser, and the
+            // network coming back would open another tab. Left alone, it
+            // connects once you sign in or gives up by itself.
+            if state == .connecting, connection?.waitingForSignIn == true {
+                log.write("network lost while waiting for a sign-in; still waiting", host: host)
+                return
+            }
             clicked = false
             log.write("network lost; pausing", host: host)
             await halt()
@@ -246,6 +278,10 @@ public final class HostSession {
             log.write("network changed while waiting for a sign-in; still waiting", host: host)
             return
         }
+        // Already about to start on this network: a waking laptop reports
+        // several network changes within a second, and each one used to
+        // throw the start away and schedule it again.
+        if running, state == .connecting, connection == nil { return }
         log.write("resuming", host: host)
         await halt()
         start(after: timing.settle)

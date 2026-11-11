@@ -13,6 +13,8 @@
 # keychain item "fwd-stats":
 #   security add-generic-password -a "$USER" -s fwd-stats -w
 set -eu
+# .envrc is looked for in the repo, wherever this is run from.
+cd "$(dirname "$0")/.."
 
 # The repo's git-ignored .envrc holds the token; hooks don't run direnv.
 if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && [ -f .envrc ]; then . ./.envrc; fi

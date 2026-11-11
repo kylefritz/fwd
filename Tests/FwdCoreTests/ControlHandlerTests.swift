@@ -101,6 +101,27 @@ import Testing
         await rig.model.shutdown()
     }
 
+    @Test func forwardDoesNotRetryAHostThatNeedsYouButConnectDoes() async throws {
+        // #21: a script ran `fwd host port` after every failure, and each
+        // run restarted the browser sign-in.
+        let rig = try Rig()
+        rig.box.startError = .needsAttention("sign in")
+        await rig.model.start(runTimer: false)
+        let h = handler(rig)
+        for _ in 0..<3 {
+            let reply = await h.handle(ControlRequest(cmd: "forward", args: ["devbox", "7440"], timeout: 5))
+            #expect(reply.exitCode == .failed)
+            #expect(reply.error == "devbox needs you: sign in Run: fwd connect devbox after fixing it")
+        }
+        #expect(rig.box.made["devbox"]?.count == 1, "only the first run tried to connect")
+
+        rig.box.startError = nil
+        let reply = await h.handle(ControlRequest(cmd: "connect", args: ["devbox"], timeout: 5))
+        #expect(reply.ok, "\(reply)")
+        #expect(rig.box.made["devbox"]?.count == 2)
+        await rig.model.shutdown()
+    }
+
     @Test func aClickedHostIsNotReportedAsStandbyBeforeItStarts() async throws {
         // Cards rebuild a run-loop turn after a click; the reply must not
         // read the card from before the session started connecting.

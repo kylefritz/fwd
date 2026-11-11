@@ -105,9 +105,6 @@ public final class SSHConnection: Connection, @unchecked Sendable {
 
     private var base: [String] { Self.baseOptions(paths: paths) }
 
-    /// Closes masters left behind by a run that was killed or crashed.
-    /// Without this they would keep their laptop ports forever. Only touches
-    /// sockets in fwd's own socket folder.
     /// Closes every master in fwd's socket folder without using Swift
     /// concurrency, for use while the app is quitting. Each one gets a couple
     /// of seconds at most.
@@ -130,6 +127,9 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         }
     }
 
+    /// Closes masters left behind by a run that was killed or crashed.
+    /// Without this they would keep their laptop ports forever. Only touches
+    /// sockets in fwd's own socket folder.
     public static func closeLeftovers(paths: Paths, log: Log) async {
         let sockets = (try? FileManager.default.contentsOfDirectory(atPath: paths.socketDir.path)) ?? []
         for name in sockets {
@@ -244,7 +244,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         await stop()
         let reason = Self.classify(stderr: stderr)
         if case .needsAttention = reason { throw reason }
-        throw ConnectionError.unreachable(stderr.isEmpty ? "Timed out connecting" : Self.lastLine(stderr))
+        throw ConnectionError.unreachable(stderr.isEmpty ? "Timed out connecting" : reason.message)
     }
 
     private func absorb(_ text: String) {
@@ -309,7 +309,30 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         if needsHuman.contains(where: { lowered.contains($0.lowercased()) }) {
             return .needsAttention(message)
         }
-        return .unreachable(message)
+        return .unreachable(proxyFailure(stderr) ?? message)
+    }
+
+    /// What to show when the host's ProxyCommand died before ssh got through
+    /// it, or nil when that isn't what happened. ssh's own last line is then
+    /// "Connection closed by UNKNOWN port 65535", which says nothing; the
+    /// proxy's complaint is on the line before it (#13).
+    static func proxyFailure(_ stderr: String) -> String? {
+        // With a proxy in between ssh doesn't know the address, so it names
+        // the peer UNKNOWN port 65535. It never says that about a real host.
+        let sshOwn = ["UNKNOWN port 65535", "kex_exchange_identification:", "banner exchange"]
+        let lines = stderr.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard let last = lines.last, last.contains("UNKNOWN port 65535") else { return nil }
+        guard let proxy = lines.last(where: { line in !sshOwn.contains { line.contains($0) } }) else {
+            return "The ssh proxy (ProxyCommand) didn't get a connection through. Plain ssh will fail the same way."
+        }
+        // Go proxies (cloudflared, tsh) say `read tcp a->b: read: connection
+        // reset by peer`: they connected, then something cut the connection.
+        if proxy.lowercased().contains("connection reset by peer") {
+            return "The ssh proxy connected, then the network reset it. "
+                + "This network may be blocking it; plain ssh will fail too."
+        }
+        return "The ssh proxy failed: \(proxy)"
     }
 
     /// Asks the master to add or drop one forward. The target is `localhost`
