@@ -231,6 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func showWindow() {
+        closePanel()
         if window == nil {
             let hosting = NSHostingController(
                 rootView: PanelView(model: model, updater: updater, app: self, inWindow: true))
@@ -246,6 +247,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Closes the menu bar panel if it's open, so what a menu item opened
+    /// isn't left behind it (#18). SwiftUI gives no call for this. Clicking
+    /// fwd's own menu bar item is what a person would do, and it keeps the
+    /// item's highlight right; closing the panel's window directly is the
+    /// fallback.
+    func closePanel() {
+        guard let panel = NSApp.windows.first(where: { $0.isVisible && $0.className.contains("MenuBarExtra") }) else { return }
+        // After the menu that asked has finished with its click.
+        DispatchQueue.main.async { [log = model.log] in
+            guard panel.isVisible else { return }
+            let button = NSApp.windows.lazy
+                .filter { $0.className.contains("NSStatusBarWindow") }
+                .compactMap { $0.contentView.flatMap(Self.statusButton) }.first
+            if let button {
+                button.performClick(nil)
+                log.write("closed the panel after a menu item (clicked the menu bar item)")
+            } else {
+                panel.close()
+                log.write("closed the panel after a menu item (no menu bar button found, so closed its window)")
+            }
+        }
+    }
+
+    private static func statusButton(in view: NSView) -> NSStatusBarButton? {
+        if let button = view as? NSStatusBarButton { return button }
+        return view.subviews.lazy.compactMap(statusButton).first
     }
 
     /// Panel and window each report when they appear and disappear; live
@@ -264,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: Actions the views can't do themselves
 
     func openLog() {
+        closePanel()
         if !FileManager.default.fileExists(atPath: paths.logFile.path) {
             model.log.write("log opened")
             model.log.flush()
@@ -274,6 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Opens the ssh config in VS Code, else `$EDITOR` in Terminal, else
     /// TextEdit. Creates an empty one first if there's none.
     func openSSHConfig() {
+        closePanel()
         let file = model.paths.sshConfig
         do {
             try SSHConfigFile.ensureExists(file)
@@ -287,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Opens config.yaml, writing one with every option explained first if
     /// there isn't one.
     func openSettings() {
+        closePanel()
         do {
             try model.store.ensurePreferencesFile()
         } catch {
@@ -390,6 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Opens the window for reporting a bug or requesting a feature.
     func showReport(_ kind: IssueReport.Kind) {
+        closePanel()
         reportWindow?.close()
         let view = ReportView(kind: kind, app: self, model: model) { [weak self] in self?.reportWindow?.close() }
         let w = NSWindow(contentViewController: NSHostingController(rootView: view))
@@ -419,6 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Opens the window listing the `fwd` commands run and what ran them.
     func showCommands() {
+        closePanel()
         if commandsWindow == nil {
             let view = CommandsView(log: model.commands, copy: { [weak self] in self?.copy($0) })
             let w = NSWindow(contentViewController: NSHostingController(rootView: view))
