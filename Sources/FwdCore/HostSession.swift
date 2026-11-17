@@ -91,6 +91,10 @@ public final class HostSession {
     private var saidLettingFinish = false
     /// The host is turned off: no reason to connect counts.
     private var off = false
+    /// A person clicked for the connection now being made, so a sign-in
+    /// proxy may open its browser page. Every other attempt (a reconnect, a
+    /// kept port, an ssh session fwd noticed, the command line) is quiet.
+    private var attended = false
 
     public init(host: String, makeConnection: @escaping () -> Connection, allocator: PortAllocator,
                 power: PowerEvents, timing: Timing = Timing(), log: Log) {
@@ -118,7 +122,7 @@ public final class HostSession {
     /// Some valid entry is on, so a connection could be wanted.
     public var hasEnabledEntries: Bool { !patterns.isEmpty }
 
-    static let signInNeeded = "This host wants you to sign in in a browser. Click Retry to sign in."
+    static let signInNeeded = ConnectionError.signInNeeded
 
     public static func stickyKey(host: String, entry: String, remote: Int) -> String {
         "\(host)|\(entry)|\(remote)"
@@ -175,9 +179,20 @@ public final class HostSession {
             return
         }
         clicked = true
-        if running, state == .connected || state == .connecting || state == .retrying { return }
-        log.write("connecting (clicked)", host: host)
+        if running, state == .connected || state == .connecting || state == .retrying {
+            // An attempt nobody asked for may be a moment from finding out
+            // the host wants a sign-in, and it would stop there without
+            // opening the page. A person is here now, so start over.
+            // (One that already has a page open is left to wait for it.)
+            guard !unattended, !attended, state != .connected,
+                  connection?.waitingForSignIn != true else { return }
+            log.write("clicked while a connection nobody asked for was being made; "
+                      + "starting it again so a sign-in page can open", host: host)
+        } else {
+            log.write("connecting (\(unattended ? "the command line" : "clicked"))", host: host)
+        }
         await halt()
+        attended = !unattended
         start()
     }
 
@@ -260,6 +275,7 @@ public final class HostSession {
             asleep = true
             // A click connects once; sleeping ends it.
             clicked = false
+            attended = false
             // Waiting for a person stays that way, or waking would retry.
             if case .needsAttention = state { return }
             guard !patterns.isEmpty, running || state != .standby else { return }
@@ -400,6 +416,7 @@ public final class HostSession {
             conn.onExit = { [weak self] in
                 Task { @MainActor in self?.linkDied(gen) }
             }
+            conn.quietSignIn = !attended
             connection = conn
             attemptStarted = Date()
             saidLettingFinish = false
@@ -591,6 +608,12 @@ public final class HostSession {
         switch new {
         case .standby, .paused, .off: clicked = false
         default: break
+        }
+        // The click has done its job once the host is connected or has
+        // stopped; a reconnect later on is nobody's request.
+        switch new {
+        case .connecting, .retrying: break
+        default: attended = false
         }
         state = new
         changed()

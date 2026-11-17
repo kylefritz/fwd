@@ -27,7 +27,10 @@ import Testing
                              },
                              // These tests are about the model, not this machine's ports or ssh sessions.
                              isPortFree: { _ in true },
-                             userSessions: { UserSessions.Found(sessions: box.sessions) },
+                             userSessions: {
+                                 UserSessions.Found(sessions: box.sessions, settling: Set(box.newcomers.keys),
+                                                    newcomers: box.newcomers)
+                             },
                              busyPorts: { _ in box.busy },
                              namesPort: UInt16(namesPort))
             self.box = box
@@ -41,6 +44,8 @@ import Testing
             var startError: ConnectionError?
             /// Hosts you have your own ssh session to.
             var sessions: Set<String> = []
+            /// Proxied ssh sessions too new to count, by host.
+            var newcomers: [String: UserSessions.Newcomer] = [:]
             /// Laptop ports with a connection open through them.
             var busy: Set<Int> = []
         }
@@ -49,6 +54,38 @@ import Testing
         func card(_ name: String) -> HostCard? { model.cards.first { $0.name == name } }
         func pill(_ host: String, _ text: String) -> Pill? { card(host)?.pills.first { $0.text == text } }
         var portsText: String { (try? String(contentsOf: model.paths.portsFile, encoding: .utf8)) ?? "" }
+    }
+
+    @Test func somethingElseRetryingSshIsCountedAndNamed() async throws {
+        // #28: another program started ssh to a host every 40 seconds, each
+        // one opening a sign-in tab that looked like fwd's doing.
+        let rig = try Rig()
+        await rig.model.start(runTimer: false)
+        // The port is on but fwd isn't connected: it tried once and gave up.
+        rig.box.startError = .unreachable("Operation timed out")
+        try await rig.model.add(host: "devbox", text: "3000")
+        try await eventually("gave up") {
+            rig.box.made["devbox"]?.count == 2 && rig.card("devbox")?.state == .standby && rig.model.overall == .idle
+        }
+        let attempts = rig.box.made["devbox"]?.count
+        for pid in [Int32(101), 102] {
+            rig.box.newcomers = ["devbox": .init(pid: pid, startedBy: "zsh ← Code Helper ← launchd")]
+            await rig.model.refreshUserSessions()
+            await rig.model.refreshUserSessions()  // still running: not counted twice
+        }
+        #expect(rig.card("devbox")?.outsideTries == nil, "two isn't a loop yet")
+        #expect(rig.model.overall == .idle)
+
+        rig.box.newcomers = ["devbox": .init(pid: 103, startedBy: "zsh ← Code Helper ← launchd")]
+        await rig.model.refreshUserSessions()
+        #expect(rig.card("devbox")?.outsideTries == OutsideTries(count: 3, startedBy: "zsh ← Code Helper ← launchd"))
+        #expect(rig.model.overall == .attention, "the menu bar icon says so too")
+        #expect(rig.box.made["devbox"]?.count == attempts, "none of them lasted, so fwd didn't connect for them")
+
+        rig.model.log.flush()
+        let log = try String(contentsOf: rig.model.paths.logFile, encoding: .utf8)
+        #expect(log.contains("just started, started by zsh ← Code Helper ← launchd"))
+        #expect(log.contains("something else keeps starting ssh to this host: 3 in the last 10 minutes"))
     }
 
     @Test func listsConfigHostsAndStartsIdle() async throws {

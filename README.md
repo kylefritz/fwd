@@ -241,13 +241,20 @@ kept as they were, and **Turn On** brings it back.
   and 30 seconds, then once a minute.
 - Asleep or offline, fwd does nothing at all, and picks up again when the Mac
   wakes or the network returns.
-- When a sign-in proxy like cloudflared opens a browser, fwd waits up to three
-  minutes for you to sign in and then connects by itself.
+- A sign-in page (from a proxy like cloudflared) opens only when you ask:
+  **Connect**, **Sign In**, turning a port on, or `fwd connect <host>`. fwd
+  then waits up to three minutes for you to sign in and connects by itself.
+  A connection nobody asked for (a reconnect, a kept port, your ssh session,
+  a script running `fwd <host> <port>`) never opens one: the host shows
+  **Sign In** and waits for you.
 - When ssh needs a person (key not loaded, unknown host key, a browser
-  sign-in left unfinished), fwd stops and shows **Retry** and **Open in
-  Terminal**. Only **Retry** or `fwd connect <host>` tries again: running
-  `fwd <host> <port>` once more doesn't, so a script can't open a sign-in
-  page each time it runs.
+  sign-in), fwd stops and shows **Retry** or **Sign In**, and **Open in
+  Terminal**. Only those or `fwd connect <host>` try again: running
+  `fwd <host> <port>` once more doesn't.
+- If another program keeps starting `ssh <host>` through a sign-in proxy
+  (three or more tries in ten minutes that don't last), the card says so and
+  names what started them. Each of those can open a sign-in tab; they aren't
+  fwd's, and they stop once you've signed in.
 
 ## Configuration
 

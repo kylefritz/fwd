@@ -285,6 +285,25 @@ Connect button.
   ssh alone. It also leaves alone an ssh started in the last 20 seconds,
   which may be about to open that browser: the attempt connects or gives up
   by itself, and the retry loop goes on from there.
+- Only a person's click (Connect, Sign In, Retry, turning a port on, Screen
+  Sharing) or `fwd connect` may open a sign-in page. Every other attempt is
+  quiet: a reconnect, a kept entry, a detected ssh session, `fwd <host>
+  <port>`. A quiet ssh to a host with a ProxyCommand runs with a stand-in
+  `open` first on its PATH (a script in fwd's socket folder that only notes
+  it was run), because cloudflared opens the browser by running `open`.
+  When the proxy then asks for a sign-in, fwd stops the ssh at once and the
+  host is "needs attention" with a "Sign In" button; no page opened and
+  nothing waits three minutes. If the proxy reached the browser some other
+  way (the note is missing), a page is open, so fwd waits for it as above
+  and says so in the log. A click while a quiet attempt is still connecting
+  starts it again, so the page can open. The click counts until the host
+  connects or stops; the reconnect after a later drop is quiet again.
+- Something else that keeps starting ssh to a host through a proxy (an
+  editor, a script) shows on the card: each new ssh through a proxy that hasn't
+  yet lasted the 20 seconds it takes to count as your session is logged with the programs that started it, and three or
+  more within ten minutes, while fwd isn't connected to that host, put a
+  line on the card with the count and those names, and the menu bar icon in
+  its attention look. fwd doesn't stop them; signing in once does.
 - A host can be turned off whole ("Turn Off and Hide" in its ••• menu). Its
   connection is dropped and nothing connects it: not your ssh session, a
   kept entry, a click or the command line, which answers that the host is
@@ -303,7 +322,7 @@ Connect button.
   puts the host in "needs attention" and stops retrying: a key not loaded in
   the agent, a password-only host, an unknown or changed host key, an expired
   single sign-on session behind a ProxyCommand. The card shows the last ssh
-  error line with two buttons: "Retry", and "Open in Terminal", which runs
+  error line with two buttons: "Retry" ("Sign In" for a browser sign-in), and "Open in Terminal", which runs
   `ssh <host>` in the user's terminal so they can complete whatever ssh is
   asking for. After a successful retry the host continues normally.
 - "Open in Terminal" opens an `ssh://<host>` link, so the terminal runs plain

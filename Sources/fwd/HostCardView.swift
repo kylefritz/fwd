@@ -57,6 +57,7 @@ struct HostCardView: View {
         VStack(alignment: .leading, spacing: 8) {
             header
             if needsAttention { attention }
+            if let outside = card.outsideTries { outsideTries(outside) }
             if !card.pills.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(card.pills) { pill in
@@ -139,12 +140,27 @@ struct HostCardView: View {
             Text(card.statusLine).font(.caption).foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             HStack {
-                Button("Retry") { Task { await model.connect(host: card.name) } }
+                if ConnectionError.asksToSignIn(card.statusLine) {
+                    Button("Sign In") { Task { await model.connect(host: card.name) } }
+                        .help("Connects to \(card.name) now, which opens its sign-in page in your browser. fwd never opens that page by itself.")
+                } else {
+                    Button("Retry") { Task { await model.connect(host: card.name) } }
+                }
                 Button("Open in Terminal") { app.openInTerminal(host: card.name) }
                     .help("Runs ssh \(card.name) so you can answer whatever ssh is asking for")
             }
             .controlSize(.small)
         }
+    }
+
+    /// Something other than fwd keeps starting ssh to this host. Says so,
+    /// since each of those can open a sign-in tab that looks like fwd's.
+    private func outsideTries(_ outside: OutsideTries) -> some View {
+        let by = outside.startedBy.isEmpty ? "" : " (started by \(outside.startedBy))"
+        return Text("Something else on this Mac keeps starting ssh to \(card.name): \(outside.count) times in the last 10 minutes\(by). "
+             + "If \(card.name) wants a sign-in, each try can open a browser tab. Those aren't fwd's, and they stop once you've signed in.")
+            .font(.caption).foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
     }
 
     private var configSection: some View {

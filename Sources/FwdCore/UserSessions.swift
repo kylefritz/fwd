@@ -26,10 +26,26 @@ public enum UserSessions {
         public var sessions: Set<String>
         /// Hosts whose only session goes through a proxy and is too new to count yet.
         public var settling: Set<String>
+        /// The newest too-new ssh for each settling host, so something that
+        /// starts one after another can be counted and named.
+        public var newcomers: [String: Newcomer]
 
-        public init(sessions: Set<String> = [], settling: Set<String> = []) {
+        public init(sessions: Set<String> = [], settling: Set<String> = [], newcomers: [String: Newcomer] = [:]) {
             self.sessions = sessions
             self.settling = settling
+            self.newcomers = newcomers
+        }
+    }
+
+    public struct Newcomer: Equatable, Sendable {
+        public var pid: Int32
+        /// The programs above the ssh, nearest first, like `zsh ← Code Helper
+        /// ← launchd`. Names only. Empty when it couldn't be read.
+        public var startedBy: String
+
+        public init(pid: Int32, startedBy: String = "") {
+            self.pid = pid
+            self.startedBy = startedBy
         }
     }
 
@@ -49,7 +65,12 @@ public enum UserSessions {
             processes.append(Process(pid: pid, ppid: ppid, arguments: arguments,
                                      age: elapsed(String(fields[2])) ?? .infinity))
         }
-        return find(processes, socketDir: paths.socketDir.path)
+        var found = find(processes, socketDir: paths.socketDir.path)
+        // Read while the ssh is still running; it may be gone in seconds.
+        for (host, newcomer) in found.newcomers {
+            found.newcomers[host]?.startedBy = Caller.of(pid: newcomer.pid).summary
+        }
+        return found
     }
 
     static func hosts(_ processes: [Process], socketDir: String) -> Set<String> {
@@ -62,6 +83,7 @@ public enum UserSessions {
         // ProxyJump hop; a plain session has none.
         let parents = Set(processes.map(\.ppid))
         var found = Found()
+        var youngest: [String: TimeInterval] = [:]
         for process in processes where sshPIDs.contains(process.pid) {
             // An ssh started by an ssh is a ProxyCommand or ProxyJump hop.
             if sshPIDs.contains(process.ppid) { continue }
@@ -70,11 +92,16 @@ public enum UserSessions {
             guard let host = destination(Array(process.arguments.dropFirst()))?.lowercased() else { continue }
             if parents.contains(process.pid), process.age < proxiedSettle {
                 found.settling.insert(host)
+                if process.age < youngest[host] ?? .infinity {
+                    youngest[host] = process.age
+                    found.newcomers[host] = Newcomer(pid: process.pid)
+                }
             } else {
                 found.sessions.insert(host)
             }
         }
         found.settling.subtract(found.sessions)
+        for host in found.sessions { found.newcomers[host] = nil }
         return found
     }
 

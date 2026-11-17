@@ -161,6 +161,8 @@ final class FakeConnection: Connection, @unchecked Sendable {
     /// stop() takes this long, like ssh being asked to exit.
     var stopDelay: Double = 0
     private(set) var waitingForSignIn = false
+    /// What the session asked for: no sign-in page for this attempt.
+    var quietSignIn = false
     private var stopped = false
 
     func start() async throws {
@@ -225,6 +227,8 @@ final class SSHTestServer {
     /// then connects once that's done (after 8 seconds) or never.
     static let signInHost = "signin"
     static let signInNeverHost = "signin-never"
+    /// Like cloudflared, runs `open <url>` before it asks for the sign-in.
+    static let signInOpensHost = "signin-opens"
 
     init() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-sshd-\(UUID().uuidString.prefix(8))")
@@ -280,6 +284,7 @@ final class SSHTestServer {
             + host(Self.badKeyHost, key: "wrongkey")
             + host(Self.signInHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 8))
             + host(Self.signInNeverHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 600))
+            + host(Self.signInOpensHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 600, opens: true))
             + "Host pattern-*\n  User nobody\n")
             .write(to: paths.sshConfig, atomically: true, encoding: .utf8)
 
@@ -288,8 +293,9 @@ final class SSHTestServer {
 
     /// Prints cloudflared's sign-in lines, waits as if for the browser, then
     /// connects to the server.
-    private static func signInProxy(port: Int, wait: Int) -> String {
-        "  ProxyCommand sh -c 'echo \"A browser window should have opened at the following URL:\" >&2;"
+    private static func signInProxy(port: Int, wait: Int, opens: Bool = false) -> String {
+        // `open` by its bare name, found on PATH, as cloudflared runs it.
+        "  ProxyCommand sh -c '" + (opens ? "open \"https://example.com/cdn-cgi/access/cli\"; " : "") + "echo \"A browser window should have opened at the following URL:\" >&2;"
             + " echo \"https://example.com/cdn-cgi/access/cli\" >&2; sleep \(wait); exec nc 127.0.0.1 \(port)'"
     }
 
