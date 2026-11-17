@@ -73,6 +73,9 @@ import Testing
             await rig.model.refreshUserSessions()
             await rig.model.refreshUserSessions()  // still running: not counted twice
         }
+        // The first is still running when the second exits, and shows again.
+        rig.box.newcomers = ["devbox": .init(pid: 101, startedBy: "zsh ← Code Helper ← launchd")]
+        await rig.model.refreshUserSessions()
         #expect(rig.card("devbox")?.outsideTries == nil, "two isn't a loop yet")
         #expect(rig.model.overall == .idle)
 

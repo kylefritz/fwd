@@ -153,9 +153,10 @@ public final class AppModel: ObservableObject {
     private var offHosts: Set<String> = []
     /// Hosts you have your own ssh session to, from the last look.
     private var openSessions: Set<String> = []
-    /// The newest too-new proxied ssh seen for each host (lowercased), so
-    /// the next one is told apart from it.
-    private var lastNewcomer: [String: Int32] = [:]
+    /// The too-new proxied ssh processes already counted for each host
+    /// (lowercased), most recent last. More than the last one: with two
+    /// running at once, the older shows again when the newer exits.
+    private var countedNewcomers: [String: [Int32]] = [:]
     /// When each too-new proxied ssh to a host was first seen, and who
     /// started the latest. Something that retries ssh shows up here.
     private var outsideTries: [String: [Date]] = [:]
@@ -278,7 +279,7 @@ public final class AppModel: ObservableObject {
         guard sessions.values.contains(where: \.hasEnabledEntries) else {
             // Not looked at, so not trusted when a port is turned on later.
             openSessions = []
-            lastNewcomer = [:]
+            countedNewcomers = [:]
             return
         }
         lookingForSessions = true
@@ -290,7 +291,8 @@ public final class AppModel: ObservableObject {
         let now = Date()
         for (host, session) in sessions where session.hasEnabledEntries {
             let key = host.lowercased()
-            guard let newcomer = found.newcomers[key], lastNewcomer[key] != newcomer.pid else { continue }
+            guard let newcomer = found.newcomers[key], countedNewcomers[key]?.contains(newcomer.pid) != true else { continue }
+            countedNewcomers[key] = Array(((countedNewcomers[key] ?? []) + [newcomer.pid]).suffix(50))
             let by = newcomer.startedBy.isEmpty ? "" : ", started by \(newcomer.startedBy)"
             log.write("an ssh session goes through a proxy and just started\(by); "
                       + "counting it once it has lasted \(Int(UserSessions.proxiedSettle))s", host: host)
@@ -304,7 +306,6 @@ public final class AppModel: ObservableObject {
                           + "can open a browser page. fwd doesn't open those", host: host)
             }
         }
-        lastNewcomer = found.newcomers.mapValues(\.pid)
         // The card's count grows with each new one and runs out with time.
         if !outsideTries.isEmpty { rebuild() }
         for (host, session) in sessions { await session.setUserSession(hasUserSession(host)) }
