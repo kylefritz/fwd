@@ -28,10 +28,71 @@ public protocol Connection: AnyObject {
     func run(_ command: String) async throws -> String
     /// `start()` is waiting for you to sign in in a browser it opened.
     var waitingForSignIn: Bool { get }
+    /// Nobody asked for this connection (a reconnect, a kept port, an ssh
+    /// session fwd noticed, a script), so `start()` must not let a sign-in
+    /// proxy open a browser page. It fails with `needsAttention` instead,
+    /// and the page opens when a person clicks Sign In (#28, #29).
+    var quietSignIn: Bool { get set }
 }
 
 public extension Connection {
     var waitingForSignIn: Bool { false }
+    var quietSignIn: Bool {
+        get { false }
+        set {}
+    }
+}
+
+public extension ConnectionError {
+    /// How every "this host wants a browser sign-in" message starts, so the
+    /// card can offer Sign In instead of Retry.
+    static let signInSentence = "This host wants you to sign in in a browser."
+    /// A sign-in is needed and no page is open for it.
+    static let signInNeeded = "\(signInSentence) Click Sign In and fwd opens the page."
+    /// A page was opened and nobody answered it in time.
+    static let signInTimedOut = "\(signInSentence) The page fwd opened wasn't answered. Click Sign In to open it again."
+
+    /// Whether `message` is one of the sign-in messages above.
+    static func asksToSignIn(_ message: String) -> Bool { message.hasPrefix(signInSentence) }
+}
+
+/// A do-nothing `open` put first on an ssh's PATH, so a sign-in proxy that
+/// runs `open <url>` (cloudflared does) leaves a note instead of opening a
+/// browser page. Only that one ssh and its ProxyCommand see it.
+struct OpenStandIn {
+    let dir: URL
+    private var asked: URL { dir.appendingPathComponent("asked") }
+
+    init(in parent: URL, name: String) throws {
+        dir = parent.appendingPathComponent(name + ".open")
+        try? FileManager.default.removeItem(at: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o700])
+        // The URL holds a sign-in token, so it isn't kept: only that it was asked for.
+        let quoted = "'" + asked.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = "#!/bin/sh\n# fwd's stand-in for open: see OpenStandIn in Connection.swift.\n: > \(quoted)\nexit 0\n"
+        let file = dir.appendingPathComponent("open")
+        try script.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+    }
+
+    /// `env` with the stand-in ahead of everything else on PATH.
+    func environment(_ env: [String: String]) -> [String: String] {
+        var env = env
+        let path = env["PATH"].flatMap { $0.isEmpty ? nil : $0 } ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PATH"] = dir.path + ":" + path
+        return env
+    }
+
+    /// Whether the proxy ran the stand-in. It prints its sign-in lines
+    /// about when it runs `open`, so this gives the note a second to land.
+    func wasAsked() async -> Bool {
+        for _ in 0..<10 {
+            if FileManager.default.fileExists(atPath: asked.path) { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return FileManager.default.fileExists(atPath: asked.path)
+    }
 }
 
 /// `Connection` built on the system ssh client and a ControlMaster socket.
@@ -53,8 +114,16 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     private var ready = false
     private var stopping = false
     private var signInPending = false
+    private var quiet = false
+    /// The folder holding the stand-in `open` for a quiet attempt.
+    private var standInDir: URL?
 
     public var waitingForSignIn: Bool { lock.withLock { signInPending } }
+
+    public var quietSignIn: Bool {
+        get { lock.withLock { quiet } }
+        set { lock.withLock { quiet = newValue } }
+    }
 
     public init(host: String, paths: Paths, log: Log, connectTimeout: Int = 8, signInTimeout: TimeInterval = 180) {
         self.host = host
@@ -171,6 +240,29 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             "-o", "ForkAfterAuthentication=no",
             "--", host,
         ]
+        // A sign-in proxy (cloudflared) opens the browser by running `open`.
+        // When nobody asked for this connection, give it a stand-in that
+        // only notes it was asked, so no page appears by itself.
+        var standIn: OpenStandIn?
+        if quietSignIn, proxied {
+            do {
+                let made = try OpenStandIn(in: paths.socketDir, name: URL(fileURLWithPath: socketPath).lastPathComponent)
+                standIn = made
+                lock.withLock { standInDir = made.dir }
+                process.environment = made.environment(ProcessInfo.processInfo.environment)
+                log.write("nobody asked for this connection, so a sign-in page won't be opened for it", host: host)
+            } catch {
+                log.write("couldn't set up the stand-in for open (\(error.localizedDescription)); "
+                          + "a sign-in page may open by itself", host: host)
+            }
+        }
+        // Only the sign-in needs it; it's gone once this attempt has ended.
+        defer {
+            if let standIn {
+                try? FileManager.default.removeItem(at: standIn.dir)
+                lock.withLock { standInDir = nil }
+            }
+        }
         let errPipe = Pipe()
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
@@ -222,6 +314,18 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             // The ssh that opened the browser connects by itself once you've
             // signed in, so wait for you instead of killing it.
             if !signingIn, Self.asksForBrowserSignIn(collectedStderr()) {
+                if let standIn {
+                    if await standIn.wasAsked() {
+                        log.write("this host wants a browser sign-in; kept the page from opening, "
+                                  + "and stopped until you click Sign In", host: host)
+                        await stop()
+                        throw ConnectionError.needsAttention(ConnectionError.signInNeeded)
+                    }
+                    // The proxy reached the browser some other way (its own
+                    // PATH, an absolute path), so a page is open: wait for it.
+                    log.write("the proxy opened the sign-in page without going through fwd's stand-in "
+                              + "for open, so a page did open", host: host)
+                }
                 signingIn = true
                 lock.withLock { signInPending = true }
                 deadline = max(deadline, Date().addingTimeInterval(signInTimeout))
@@ -302,7 +406,7 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         // A sign-in proxy that opened a browser and wasn't answered in time.
         // Retrying by itself would open another tab.
         if asksForBrowserSignIn(stderr) {
-            return .needsAttention("This host wants you to sign in in a browser. Open in Terminal to sign in, then Retry.")
+            return .needsAttention(ConnectionError.signInTimedOut)
         }
         let lowered = stderr.lowercased()
         let message = stderr.isEmpty ? "ssh exited without a message" : lastLine(stderr)
@@ -355,12 +459,14 @@ public final class SSHConnection: Connection, @unchecked Sendable {
     }
 
     public func stop() async {
-        let process = lock.withLock { () -> Process? in
+        let (process, standIn) = lock.withLock { () -> (Process?, URL?) in
             stopping = true
             ready = false
             signInPending = false
-            return self.process
+            defer { standInDir = nil }
+            return (self.process, standInDir)
         }
+        if let standIn { try? FileManager.default.removeItem(at: standIn) }
         guard let process else { return }
         if process.isRunning {
             _ = await control(["-O", "exit"], timeout: 5)

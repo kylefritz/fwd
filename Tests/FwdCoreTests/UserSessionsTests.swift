@@ -66,6 +66,20 @@ import Testing
         #expect(UserSessions.find([settled, proxy], socketDir: socketDir) == .init(sessions: ["mbar"]))
     }
 
+    @Test func theNewestTooNewSshIsTheNewcomer() {
+        let older = UserSessions.Process(pid: 70, ppid: 1, arguments: ["ssh", "mbar"], age: 15)
+        let olderProxy = UserSessions.Process(pid: 71, ppid: 70, arguments: ["cloudflared"], age: 15)
+        let newer = UserSessions.Process(pid: 80, ppid: 1, arguments: ["ssh", "MBAR"], age: 3)
+        let newerProxy = UserSessions.Process(pid: 81, ppid: 80, arguments: ["cloudflared"], age: 3)
+        let found = UserSessions.find([older, olderProxy, newer, newerProxy], socketDir: socketDir)
+        #expect(found.newcomers == ["mbar": UserSessions.Newcomer(pid: 80)])
+
+        // A session that counts means the host isn't just being retried.
+        let yours = UserSessions.Process(pid: 90, ppid: 1, arguments: ["ssh", "mbar"], age: 600)
+        let yoursProxy = UserSessions.Process(pid: 91, ppid: 90, arguments: ["cloudflared"])
+        #expect(UserSessions.find([newer, newerProxy, yours, yoursProxy], socketDir: socketDir).newcomers.isEmpty)
+    }
+
     @Test func aNewPlainSshCountsRightAway() {
         let p = UserSessions.Process(pid: 70, ppid: 1, arguments: ["ssh", "devbox"], age: 1)
         #expect(UserSessions.hosts([p], socketDir: socketDir) == ["devbox"])

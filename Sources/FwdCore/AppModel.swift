@@ -72,9 +72,26 @@ public struct HostCard: Identifiable, Equatable, Sendable {
     public var screenSharing: Bool? = nil
     /// Turned off: fwd won't connect it, and the panel lists it under Hidden hosts.
     public var off = false
+    /// Another program keeps starting ssh to this host and fwd isn't
+    /// connected to it, so those may each be opening a sign-in tab.
+    public var outsideTries: OutsideTries? = nil
     public var id: String { name }
     /// Hosts with nothing to show are listed compactly instead of as a card.
     public var isProminent: Bool { !pills.isEmpty || !configPills.isEmpty }
+}
+
+/// ssh sessions to one host that something other than fwd keeps starting
+/// through a proxy, none of them old enough to count as yours yet.
+public struct OutsideTries: Equatable, Sendable {
+    /// How many started in the last ten minutes.
+    public let count: Int
+    /// The programs above the latest one, nearest first. Empty when unknown.
+    public let startedBy: String
+
+    public init(count: Int, startedBy: String) {
+        self.count = count
+        self.startedBy = startedBy
+    }
 }
 
 public enum OverallState: Equatable, Sendable {
@@ -136,8 +153,17 @@ public final class AppModel: ObservableObject {
     private var offHosts: Set<String> = []
     /// Hosts you have your own ssh session to, from the last look.
     private var openSessions: Set<String> = []
-    /// Hosts whose proxied session is too new to count, from the last look.
-    private var settlingSessions: Set<String> = []
+    /// The too-new proxied ssh processes already counted for each host
+    /// (lowercased), most recent last. More than the last one: with two
+    /// running at once, the older shows again when the newer exits.
+    private var countedNewcomers: [String: [Int32]] = [:]
+    /// When each too-new proxied ssh to a host was first seen, and who
+    /// started the latest. Something that retries ssh shows up here.
+    private var outsideTries: [String: [Date]] = [:]
+    private var outsideStarter: [String: String] = [:]
+    static let outsideWindow: TimeInterval = 600
+    /// This many in the window is a loop worth telling you about.
+    static let outsideNoticeAt = 3
     private var lookingForSessions = false
 
     struct ScreenSharingUse {
@@ -253,7 +279,7 @@ public final class AppModel: ObservableObject {
         guard sessions.values.contains(where: \.hasEnabledEntries) else {
             // Not looked at, so not trusted when a port is turned on later.
             openSessions = []
-            settlingSessions = []
+            countedNewcomers = [:]
             return
         }
         lookingForSessions = true
@@ -262,14 +288,26 @@ public final class AppModel: ObservableObject {
         openSessions = found.sessions
         // Said once per new ssh, so a retrying one shows up in the log without
         // a line every two seconds.
+        let now = Date()
         for (host, session) in sessions where session.hasEnabledEntries {
             let key = host.lowercased()
-            if found.settling.contains(key), !settlingSessions.contains(key) {
-                log.write("an ssh session goes through a proxy and just started; "
-                          + "counting it once it has lasted \(Int(UserSessions.proxiedSettle))s", host: host)
+            guard let newcomer = found.newcomers[key], countedNewcomers[key]?.contains(newcomer.pid) != true else { continue }
+            countedNewcomers[key] = Array(((countedNewcomers[key] ?? []) + [newcomer.pid]).suffix(50))
+            let by = newcomer.startedBy.isEmpty ? "" : ", started by \(newcomer.startedBy)"
+            log.write("an ssh session goes through a proxy and just started\(by); "
+                      + "counting it once it has lasted \(Int(UserSessions.proxiedSettle))s", host: host)
+            var tries = (outsideTries[host] ?? []).filter { now.timeIntervalSince($0) < Self.outsideWindow }
+            tries.append(now)
+            outsideTries[host] = tries
+            if !newcomer.startedBy.isEmpty { outsideStarter[host] = newcomer.startedBy }
+            if tries.count == Self.outsideNoticeAt || tries.count % 10 == 0 {
+                log.write("something else keeps starting ssh to this host: \(tries.count) in the last "
+                          + "\(Int(Self.outsideWindow / 60)) minutes\(by). If the host wants a sign-in, each one "
+                          + "can open a browser page. fwd doesn't open those", host: host)
             }
         }
-        settlingSessions = found.settling
+        // The card's count grows with each new one and runs out with time.
+        if !outsideTries.isEmpty { rebuild() }
         for (host, session) in sessions { await session.setUserSession(hasUserSession(host)) }
     }
 
@@ -817,7 +855,8 @@ public final class AppModel: ObservableObject {
                             pills: pills, configPills: configPills,
                             lastError: session?.lastError, inConfig: inConfig.contains(name),
                             screenSharing: session?.listening.map { $0.contains(ScreenSharing.remotePort) },
-                            off: offHosts.contains(name))
+                            off: offHosts.contains(name),
+                            outsideTries: outsideNotice(name, state: state))
         }
         // Hosts in use first, in config order; the stable sort keeps that order.
         built.sort { rank($0) < rank($1) }
@@ -825,7 +864,7 @@ public final class AppModel: ObservableObject {
 
         let states = sessions.values.map(\.state)
         let newOverall: OverallState
-        if fileError != nil || states.contains(where: {
+        if fileError != nil || built.contains(where: { $0.outsideTries != nil }) || states.contains(where: {
             if case .needsAttention = $0 { return true }
             return $0 == .retrying || $0 == .connecting
         }) {
@@ -836,6 +875,21 @@ public final class AppModel: ObservableObject {
             newOverall = .idle
         }
         if newOverall != overall { overall = newOverall }
+    }
+
+    /// What to say about other programs retrying ssh to `host`, or nil when
+    /// there's no loop to speak of. Nothing while fwd is connected (the
+    /// host isn't asking for a sign-in then) or the host is off.
+    private func outsideNotice(_ host: String, state: HostState) -> OutsideTries? {
+        guard state != .connected, state != .off, state != .idle, let tries = outsideTries[host] else { return nil }
+        let now = Date()
+        let recent = tries.filter { now.timeIntervalSince($0) < Self.outsideWindow }
+        if recent.count != tries.count { outsideTries[host] = recent.isEmpty ? nil : recent }
+        guard recent.count >= Self.outsideNoticeAt else { return nil }
+        // A shell inside a shell inside a shell reads as one on the card.
+        var names: [Substring] = []
+        for name in (outsideStarter[host] ?? "").split(separator: " ← ") where names.last != name { names.append(name) }
+        return OutsideTries(count: recent.count, startedBy: names.joined(separator: " ← "))
     }
 
     /// How a card lists its ports: on before off, each by remote port (a range

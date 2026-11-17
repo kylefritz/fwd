@@ -98,6 +98,74 @@ import Testing
         try await eventually("a click signs in") { s.state == .connected }
     }
 
+    // MARK: Sign-in pages only open for a click (#28, #29)
+
+    @Test func aConnectionNobodyAskedForIsQuiet() async throws {
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("up") { s.state == .connected }
+        #expect(factory.made[0].quietSignIn, "a kept port connects without a person")
+
+        factory.made[0].die()
+        try await eventually("reconnected") { factory.made.count == 2 && s.state == .connected }
+        #expect(factory.made[1].quietSignIn, "so does a reconnect")
+        await s.shutdown()
+    }
+
+    @Test func yourSshSessionAndTheCommandLineAreQuietToo() async throws {
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000")])
+        await s.setUserSession(true)
+        try await eventually("up") { s.state == .connected }
+        #expect(factory.made[0].quietSignIn)
+        await s.setUserSession(false)
+
+        await s.connect(unattended: true)
+        try await eventually("up again") { factory.made.count == 2 && s.state == .connected }
+        #expect(factory.made[1].quietSignIn, "a script may have nobody behind it")
+        await s.shutdown()
+    }
+
+    @Test func aClickMayOpenASignInPageButTheReconnectAfterItMayNot() async throws {
+        let factory = Factory()
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("up") { s.state == .connected }
+        factory.configure = { $0.startError = .needsAttention(ConnectionError.signInNeeded) }
+        factory.made[0].die()
+        try await eventually("waiting for a click") { s.state == .needsAttention(ConnectionError.signInNeeded) }
+        #expect(factory.made[1].quietSignIn)
+
+        factory.configure = { _ in }
+        await s.connect()
+        try await eventually("signed in") { factory.made.count == 3 && s.state == .connected }
+        #expect(!factory.made[2].quietSignIn, "the click is a person asking")
+
+        factory.made[2].die()
+        try await eventually("reconnected") { factory.made.count == 4 && s.state == .connected }
+        #expect(factory.made[3].quietSignIn, "the click was used up when it connected")
+        await s.shutdown()
+    }
+
+    @Test func aClickDuringAQuietAttemptStartsItAgainSoThePageCanOpen() async throws {
+        let factory = Factory()
+        factory.configure = { $0.startDelay = 5 }
+        let s = session(factory)
+        await s.setEntries([Entry(port: "3000", keep: true)])
+        try await eventually("connecting") { factory.made.count == 1 }
+        #expect(factory.made[0].quietSignIn)
+
+        factory.configure = { _ in }
+        await s.connect()
+        try await eventually("connected by the click") { s.state == .connected }
+        #expect(factory.made.count == 2)
+        #expect(factory.made[0].stopCount >= 1, "the quiet attempt was stopped")
+        #expect(!factory.made[1].quietSignIn)
+        await s.shutdown()
+    }
+
     @Test func aNetworkChangeDoesNotRestartASignIn() async throws {
         let factory = Factory()
         factory.configure = { $0.waitsForSignIn = true }

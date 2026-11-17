@@ -226,6 +226,41 @@ import Testing
         }
     }
 
+    @Test func aQuietConnectionKeepsTheSignInPageFromOpening() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let log = Log(file: server.paths.logFile)
+        // Left alone this proxy runs the real `open` and waits 600 seconds.
+        let conn = SSHConnection(host: SSHTestServer.signInOpensHost, paths: server.paths, log: log,
+                                 connectTimeout: 1, signInTimeout: 30)
+        conn.quietSignIn = true
+        let started = Date()
+        do {
+            try await conn.start()
+            Issue.record("connected without a sign-in")
+        } catch let error as ConnectionError {
+            // Not signInTimedOut: that would mean the page opened and fwd waited for it.
+            #expect(error == .needsAttention(ConnectionError.signInNeeded))
+        }
+        #expect(Date().timeIntervalSince(started) < 10, "stops right away instead of waiting for a page nobody saw")
+        try await eventually("its ssh is gone") { conn.masterPID == nil }
+        let left = try FileManager.default.contentsOfDirectory(atPath: server.paths.socketDir.path)
+        #expect(!left.contains { $0.hasSuffix(".open") }, "the stand-in is removed")
+        log.flush()
+        let written = try String(contentsOf: server.paths.logFile, encoding: .utf8)
+        #expect(written.contains("kept the page from opening"))
+    }
+
+    @Test func aQuietConnectionToAHostThatNeedsNoSignInJustConnects() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let conn = SSHConnection(host: SSHTestServer.goodHost, paths: server.paths, log: Log(file: server.paths.logFile))
+        conn.quietSignIn = true
+        try await conn.start()
+        #expect(await conn.isAlive())
+        await conn.stop()
+    }
+
     @Test func aStopWhileTheConfigIsReadKeepsSSHFromStarting() async throws {
         let server = try SSHTestServer()
         defer { server.cleanup() }
@@ -290,7 +325,7 @@ import Testing
         let server = try SSHTestServer()
         defer { server.cleanup() }
         #expect(SSHConfig.hosts(configPath: server.paths.sshConfig) == [SSHTestServer.goodHost, SSHTestServer.secondHost, SSHTestServer.badKeyHost,
-                 SSHTestServer.signInHost, SSHTestServer.signInNeverHost])
+                 SSHTestServer.signInHost, SSHTestServer.signInNeverHost, SSHTestServer.signInOpensHost])
     }
 }
 
