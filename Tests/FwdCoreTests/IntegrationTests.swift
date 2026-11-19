@@ -251,6 +251,62 @@ import Testing
         #expect(written.contains("kept the page from opening"))
     }
 
+    /// #31: ssh runs a ProxyCommand through your shell, and a shell's startup files can put
+    /// other folders ahead of the stand-in (fish does, with fish_user_paths). The proxy then
+    /// found the real `open` and a page opened by itself.
+    @Test func aQuietConnectionKeepsThePageFromOpeningWhenTheShellReordersPATH() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let log = Log(file: server.paths.logFile)
+        // A folder the shell puts first, holding an `open` that notes it ran: the real one, for this test.
+        let userPath = server.dir.appendingPathComponent("user-path")
+        try FileManager.default.createDirectory(at: userPath, withIntermediateDirectories: true)
+        let opened = server.dir.appendingPathComponent("a-page-opened")
+        try "#!/bin/sh\n: > '\(opened.path)'\n".write(to: userPath.appendingPathComponent("open"), atomically: true, encoding: .utf8)
+        // Named zsh so fwd treats it as one; it is sh with a startup file that reorders PATH.
+        let shell = server.dir.appendingPathComponent("zsh")
+        try "#!/bin/sh\nPATH='\(userPath.path)':\"$PATH\"\nexport PATH\nexec /bin/sh \"$@\"\n"
+            .write(to: shell, atomically: true, encoding: .utf8)
+        for file in [userPath.appendingPathComponent("open"), shell] {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment["SHELL"] = shell.path
+
+        let conn = SSHConnection(host: SSHTestServer.signInOpensHost, paths: server.paths, log: log,
+                                 connectTimeout: 1, signInTimeout: 4, environment: environment)
+        conn.quietSignIn = true
+        do {
+            try await conn.start()
+            Issue.record("connected without a sign-in")
+        } catch let error as ConnectionError {
+            #expect(error == .needsAttention(ConnectionError.signInNeeded))
+        }
+        #expect(!FileManager.default.fileExists(atPath: opened.path), "the proxy reached the real open")
+        log.flush()
+        let written = try String(contentsOf: server.paths.logFile, encoding: .utf8)
+        #expect(written.contains("kept the page from opening"))
+        #expect(written.contains("after your shell (zsh) has started"))
+    }
+
+    /// The usual reconnect: a proxy with nothing to ask. It runs with the rewritten
+    /// ProxyCommand, through whatever shell this Mac's SHELL is, and must still connect.
+    @Test func aQuietConnectionThroughAProxyThatNeedsNoSignInConnects() async throws {
+        let server = try SSHTestServer()
+        defer { server.cleanup() }
+        let log = Log(file: server.paths.logFile)
+        let conn = SSHConnection(host: SSHTestServer.proxiedHost, paths: server.paths, log: log)
+        conn.quietSignIn = true
+        try await conn.start()
+        #expect(await conn.isAlive())
+        #expect(try await conn.run("echo ok").contains("ok"))
+        await conn.stop()
+        log.flush()
+        let written = try String(contentsOf: server.paths.logFile, encoding: .utf8)
+        #expect(written.contains("running this host's ProxyCommand with fwd's stand-in for open first on PATH"))
+        #expect(!written.contains("ProxyCommand="), "the command itself is never logged")
+    }
+
     @Test func aQuietConnectionToAHostThatNeedsNoSignInJustConnects() async throws {
         let server = try SSHTestServer()
         defer { server.cleanup() }
@@ -325,7 +381,8 @@ import Testing
         let server = try SSHTestServer()
         defer { server.cleanup() }
         #expect(SSHConfig.hosts(configPath: server.paths.sshConfig) == [SSHTestServer.goodHost, SSHTestServer.secondHost, SSHTestServer.badKeyHost,
-                 SSHTestServer.signInHost, SSHTestServer.signInNeverHost, SSHTestServer.signInOpensHost])
+                 SSHTestServer.signInHost, SSHTestServer.signInNeverHost, SSHTestServer.signInOpensHost,
+                 SSHTestServer.proxiedHost])
     }
 }
 

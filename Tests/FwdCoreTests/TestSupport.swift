@@ -229,6 +229,8 @@ final class SSHTestServer {
     static let signInNeverHost = "signin-never"
     /// Like cloudflared, runs `open <url>` before it asks for the sign-in.
     static let signInOpensHost = "signin-opens"
+    /// Behind a proxy that needs no sign-in, like cloudflared with a fresh token.
+    static let proxiedHost = "proxied"
 
     init() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("fwd-sshd-\(UUID().uuidString.prefix(8))")
@@ -285,6 +287,7 @@ final class SSHTestServer {
             + host(Self.signInHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 8))
             + host(Self.signInNeverHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 600))
             + host(Self.signInOpensHost, key: "userkey", extra: Self.signInProxy(port: port, wait: 600, opens: true))
+            + host(Self.proxiedHost, key: "userkey", extra: "  ProxyCommand nc %h %p")
             + "Host pattern-*\n  User nobody\n")
             .write(to: paths.sshConfig, atomically: true, encoding: .utf8)
 

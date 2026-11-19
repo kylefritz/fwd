@@ -95,6 +95,83 @@ struct OpenStandIn {
     }
 }
 
+/// Rewrites a host's ProxyCommand for a quiet attempt so the stand-in `open`
+/// is first on PATH when the proxy runs.
+///
+/// Putting it first on ssh's own PATH isn't enough: ssh runs a ProxyCommand
+/// as `$SHELL -c "exec <command>"`, and the shell's startup files run before
+/// the proxy looks `open` up. fish puts fish_user_paths ahead of what it
+/// inherits, and a startup file can rebuild PATH outright, so the proxy found
+/// the real `open` and a page opened by itself (#31). Prefixed with `env
+/// PATH=…`, the command gets the stand-in first after the shell has started.
+enum QuietProxy {
+    /// Shells that read `env PATH="dir:$PATH" command` the same way. fish
+    /// joins its PATH list with colons inside double quotes, as the others do.
+    static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
+
+    /// The host's ProxyCommand as `ssh -G` prints it, with ssh's % tokens
+    /// still in place, or nil when the host has none.
+    static func command(sshG: String) -> String? {
+        for line in sshG.split(whereSeparator: \.isNewline) where line.hasPrefix("proxycommand ") {
+            let command = line.dropFirst("proxycommand ".count).trimmingCharacters(in: .whitespaces)
+            return command.isEmpty ? nil : command
+        }
+        return nil
+    }
+
+    /// `command` with the stand-in folder put first on PATH, or nil when
+    /// that can't be done safely: a shell that may read the line differently,
+    /// a folder name that would need quoting, or a command `env` can't run.
+    /// The command itself is passed through exactly as written.
+    static func wrapped(_ command: String, standIn: String, shell: String?) -> String? {
+        guard shells.contains(name(ofShell: shell)), isPlain(standIn), isOneProgram(command) else { return nil }
+        return "env PATH=\"\(standIn):$PATH\" \(command)"
+    }
+
+    /// ssh uses /bin/sh when SHELL isn't set.
+    static func name(ofShell shell: String?) -> String {
+        guard let shell, !shell.isEmpty else { return "sh" }
+        return URL(fileURLWithPath: shell).lastPathComponent
+    }
+
+    /// Nothing a shell treats specially inside double quotes, no `%` (ssh
+    /// would read it as a token) and no `:` (it would split the PATH entry).
+    static func isPlain(_ path: String) -> Bool {
+        !path.isEmpty && !path.contains { "\"$`\\%:\n".contains($0) }
+    }
+
+    /// Words that aren't programs `env` can run.
+    private static let shellWords: Set<String> = [
+        "exec", "eval", "command", "builtin", "source", ".", "cd", "set", "export", "if", "for", "while",
+        "until", "case", "begin", "function", "time", "!", "{", "[[", "noglob", "nocorrect",
+    ]
+
+    /// One program and its arguments: no pipeline, list, redirection,
+    /// subshell or shell keyword outside quotes, any of which `env` would
+    /// run only the first part of, or fail on.
+    static func isOneProgram(_ command: String) -> Bool {
+        let first = command.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+        guard !first.isEmpty, !shellWords.contains(first), !first.contains("=") else { return false }
+        var quote: Character?
+        var escaped = false
+        for character in command {
+            if escaped {
+                escaped = false
+            } else if character == "\\", quote != "'" {
+                escaped = true
+            } else if let open = quote {
+                // Command substitution runs inside double quotes too; that is the shell's to do.
+                if character == open { quote = nil }
+            } else if character == "'" || character == "\"" {
+                quote = character
+            } else if ";|&<>(){}`\n".contains(character) {
+                return false
+            }
+        }
+        return quote == nil && !escaped
+    }
+}
+
 /// `Connection` built on the system ssh client and a ControlMaster socket.
 public final class SSHConnection: Connection, @unchecked Sendable {
     public static let sshPath = "/usr/bin/ssh"
@@ -125,10 +202,15 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         set { lock.withLock { quiet = newValue } }
     }
 
-    public init(host: String, paths: Paths, log: Log, connectTimeout: Int = 8, signInTimeout: TimeInterval = 180) {
+    /// What the master ssh inherits. ssh runs a ProxyCommand with its `SHELL`.
+    private let environment: [String: String]
+
+    public init(host: String, paths: Paths, log: Log, connectTimeout: Int = 8, signInTimeout: TimeInterval = 180,
+                environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.host = host
         self.paths = paths
         self.log = log
+        self.environment = environment
         self.connectTimeout = connectTimeout
         self.signInTimeout = signInTimeout
         // One socket per connection, not per host: a stale connection being
@@ -225,12 +307,13 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         // which a sign-in proxy holds back until you've signed in. Give a
         // proxied host the whole sign-in time; the deadline below still
         // gives up on it as quickly as any other unless a sign-in starts.
-        let proxied = await usesProxyCommand()
+        let proxyCommand = await proxyCommand()
+        let proxied = proxyCommand != nil
         let sshTimeout = proxied ? max(connectTimeout, Int(signInTimeout)) : connectTimeout
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: Self.sshPath)
-        process.arguments = base + [
+        var options = [
             "-M", "-N", "-S", socketPath,
             "-o", "ExitOnForwardFailure=no",
             "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
@@ -238,24 +321,39 @@ public final class SSHConnection: Connection, @unchecked Sendable {
             "-o", "ControlPersist=no",
             // The master must stay our child so its exit can be observed.
             "-o", "ForkAfterAuthentication=no",
-            "--", host,
         ]
         // A sign-in proxy (cloudflared) opens the browser by running `open`.
         // When nobody asked for this connection, give it a stand-in that
         // only notes it was asked, so no page appears by itself.
         var standIn: OpenStandIn?
-        if quietSignIn, proxied {
+        if quietSignIn, let proxyCommand {
             do {
                 let made = try OpenStandIn(in: paths.socketDir, name: URL(fileURLWithPath: socketPath).lastPathComponent)
                 standIn = made
                 lock.withLock { standInDir = made.dir }
-                process.environment = made.environment(ProcessInfo.processInfo.environment)
+                process.environment = made.environment(environment)
                 log.write("nobody asked for this connection, so a sign-in page won't be opened for it", host: host)
+                // ssh's own PATH isn't what the proxy sees: your shell runs
+                // it and may reorder PATH first (#31). The command line wins
+                // over the config, so this replaces the host's ProxyCommand
+                // for this one ssh. Never logged: it may hold a token.
+                let shell = QuietProxy.name(ofShell: environment["SHELL"])
+                if let wrapped = QuietProxy.wrapped(proxyCommand, standIn: made.dir.path, shell: environment["SHELL"]) {
+                    options += ["-o", "ProxyCommand=\(wrapped)"]
+                    log.write("running this host's ProxyCommand with fwd's stand-in for open first on PATH, "
+                              + "set after your shell (\(shell)) has started", host: host)
+                } else {
+                    log.write("left this host's ProxyCommand as it is (your shell is \(shell); the command may be "
+                              + "more than one program, or fwd's folder name needs quoting), so the stand-in for open "
+                              + "is first only on ssh's own PATH; a shell that reorders PATH can still open a page",
+                              host: host)
+                }
             } catch {
                 log.write("couldn't set up the stand-in for open (\(error.localizedDescription)); "
                           + "a sign-in page may open by itself", host: host)
             }
         }
+        process.arguments = base + options + ["--", host]
         // Only the sign-in needs it; it's gone once this attempt has ended.
         defer {
             if let standIn {
@@ -365,21 +463,21 @@ public final class SSHConnection: Connection, @unchecked Sendable {
         return stderrLines.joined(separator: "\n")
     }
 
-    /// Whether the host's ssh config sends it through a ProxyCommand, which
-    /// is where sign-in proxies like cloudflared live.
-    /// Logs only the answer, never the command itself, which may hold a token.
-    private func usesProxyCommand() async -> Bool {
+    /// The ProxyCommand the host's ssh config sends it through, which is
+    /// where sign-in proxies like cloudflared live, or nil when it has none.
+    /// Logs only that there is one, never the command itself, which may hold a token.
+    private func proxyCommand() async -> String? {
         let result = await Shell.run(Self.sshPath, base + ["-G", "--", host], timeout: 5)
         guard result.ok else {
             let why = result.status == -1 ? "timed out" : Self.lastLine(result.stderr.isEmpty ? "exit \(result.status)" : result.stderr)
             log.write("couldn't read the ssh config (\(why)); connecting without waiting for a sign-in", host: host)
-            return false
+            return nil
         }
-        let proxied = result.stdout.split(whereSeparator: \.isNewline).contains { $0.hasPrefix("proxycommand ") }
-        if proxied {
+        let command = QuietProxy.command(sshG: result.stdout)
+        if command != nil {
             log.write("goes through a ProxyCommand; ssh may wait \(Int(signInTimeout))s for a sign-in", host: host)
         }
-        return proxied
+        return command
     }
 
     /// A sign-in proxy has opened a browser and is waiting for you.
