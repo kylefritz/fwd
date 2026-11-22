@@ -22,12 +22,27 @@ jobs:
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
       - name: Test
         run: make test
+      - name: Get ready to sign
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: scripts/ci-signing.sh
       - name: Build the app
         run: make app VERSION="$VERSION"
       - name: Check the bundle
         run: |
           test "$(build/fwd.app/Contents/Resources/bin/fwd --version)" = "$VERSION"
           codesign --verify --deep --strict build/fwd.app
+          # A notarized build has to pass Gatekeeper as a download would.
+          if [ -n "${NOTARY_KEY:-}" ]; then
+            spctl --assess --type execute -vv build/fwd.app
+            echo "NOTES=.github/release-notes-notarized.md" >> "$GITHUB_ENV"
+          else
+            echo "NOTES=.github/release-notes.md" >> "$GITHUB_ENV"
+          fi
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -40,7 +55,7 @@ jobs:
             exit 0
           fi
           # The install notes come first, then GitHub's list of changes.
-          gh release create "$GITHUB_REF_NAME" build/fwd.zip --title "fwd $VERSION" --notes-file .github/release-notes.md --generate-notes
+          gh release create "$GITHUB_REF_NAME" build/fwd.zip --title "fwd $VERSION" --notes-file "$NOTES" --generate-notes
       - name: Update the Homebrew tap
         if: ${{ env.TAP_DEPLOY_KEY != '' }}
         run: scripts/update-formula.sh "$VERSION"

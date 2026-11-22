@@ -35,12 +35,27 @@ jobs:
           IFS=. read -r major minor patch <<< "${last:-v0.0.0}"
           major=${major#v}
           echo "VERSION=$major.$minor.$((patch + 1))-beta.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+      - name: Get ready to sign
+        env:
+          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: scripts/ci-signing.sh
       - name: Build the app
         run: make app VERSION="$VERSION"
       - name: Check the bundle
         run: |
           test "$(build/fwd.app/Contents/Resources/bin/fwd --version)" = "$VERSION"
           codesign --verify --deep --strict build/fwd.app
+          # A notarized build has to pass Gatekeeper as a download would.
+          if [ -n "${NOTARY_KEY:-}" ]; then
+            spctl --assess --type execute -vv build/fwd.app
+            echo "NOTES=.github/release-notes-notarized.md" >> "$GITHUB_ENV"
+          else
+            echo "NOTES=.github/release-notes.md" >> "$GITHUB_ENV"
+          fi
       - name: Publish the prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,7 +67,7 @@ jobs:
           fi
           gh release create "v$VERSION" build/fwd.zip --prerelease --target "$SHA" \
             --title "fwd $VERSION" \
-            --notes "$(printf 'Beta built from %s. Set `update_channel: beta` in ~/.config/fwd/config.yaml to follow these.\n\n' "${SHA:0:7}"; cat .github/release-notes.md)"
+            --notes "$(printf 'Beta built from %s. Set `update_channel: beta` in ~/.config/fwd/config.yaml to follow these.\n\n' "${SHA:0:7}"; cat "$NOTES")"
       - name: Keep only the newest ten betas
         env:
           GH_TOKEN: ${{ github.token }}
