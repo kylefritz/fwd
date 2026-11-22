@@ -54,9 +54,8 @@ In scope:
 Out of scope: creating remote forwards, managing the config's own forwards,
 SOCKS proxies, editing `~/.ssh/config`, password or interactive
 authentication inside the app, non-loopback remote targets, treating two host
-aliases as the same machine, Intel Macs, Windows remotes, localization, any
-usage tracking beyond the ping that counts installs (see Privacy), and
-Developer ID signing or notarization (see Distribution).
+aliases as the same machine, Intel Macs, Windows remotes, localization,
+and any usage tracking beyond the ping that counts installs (see Privacy).
 
 ## Port entry syntax
 
@@ -537,7 +536,7 @@ else. The log stays on the machine unless the user puts it in an issue
 - Requires macOS 26 or later on Apple Silicon. Intel Macs and older macOS
   versions are not supported; 26 is what the app is built and tested on.
 - Releases are built by a GitHub Actions workflow on a version tag
-  (`vX.Y.Z`): build, bundle, ad-hoc `codesign`, zip, and publish a release
+  (`vX.Y.Z`): build, bundle, `codesign`, zip, and publish a release
   with one asset, `fwd.zip`. `scripts/bundle.sh` does the bundling and is the
   same script used locally. The tag is pushed by hand, on a commit whose CI
   passed; `release.yml` publishes the release and updates the Homebrew tap.
@@ -551,12 +550,26 @@ else. The log stays on the machine unless the user puts it in an issue
   this route has no Gatekeeper step. The formula installs `fwd.app` under the
   Homebrew prefix and links the `fwd` terminal command onto `PATH`. The
   release workflow updates the formula's URL and checksum on each tag.
-- The app is ad-hoc signed and not notarized. A copy downloaded with a browser
-  is quarantined and Gatekeeper blocks it until the user approves it in System
-  Settings or removes the quarantine attribute. The README gives both sets of
-  steps and the build-from-source route, which has no such step.
-  Developer ID signing and notarization would remove this friction; it needs a
-  paid Apple Developer account and is left for later.
+- Releases and betas are signed with a Developer ID certificate and notarized
+  by Apple when the repository holds the secrets for it, so a downloaded copy
+  opens with no Gatekeeper step. `scripts/ci-signing.sh` loads the certificate
+  (`DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`) into a keychain of its own
+  on the runner and passes an App Store Connect API key (`NOTARY_KEY_P8`,
+  `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`) to `scripts/bundle.sh`, which signs the
+  terminal command and then the app with the hardened runtime, sends the zip
+  to Apple's notary, staples the ticket to the app and zips it again. The
+  workflow then checks the app with `spctl` and picks the release notes that
+  match (`.github/release-notes-notarized.md`).
+- Without those secrets (a fork, or before they are set) the app is ad-hoc
+  signed and not notarized, and the run carries a warning saying so. A copy
+  of such a build downloaded with a browser is quarantined and Gatekeeper
+  blocks it until the user approves it in System Settings or removes the
+  quarantine attribute. The README gives both sets of steps and the
+  build-from-source route, which has no such step.
+- Pull request previews and local builds are always ad-hoc signed, so the
+  signing key is never in reach of a pull request's code. The updater checks
+  only that a signature is valid, not who made it, so moving between a signed
+  release and an ad-hoc preview works.
 - README covers: what it does, install (Homebrew first), the Gatekeeper step, the entry syntax,
   requirements (key-based login that works without prompts), file locations,
   privacy, and troubleshooting with the log.
